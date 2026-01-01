@@ -67,14 +67,12 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
  * Start a download in the background (fire and forget)
  */
 export function startDownload(options: DownloadOptions): DownloadResult {
-  const outputPath = options.outputPath || "/downloads";
-  
   // Ensure output directory exists
-  if (!existsSync(outputPath)) {
-    mkdirSync(outputPath, { recursive: true });
+  if (!existsSync(options.outputPath)) {
+    mkdirSync(options.outputPath, { recursive: true });
   }
 
-  const args = buildYtDlpArgs({ ...options, outputPath });
+  const args = buildYtDlpArgs(options);
 
   console.log(`[${new Date().toISOString()}] Starting download: ${options.url}`);
   console.log(`[${new Date().toISOString()}] Command: yt-dlp ${args.join(" ")}`);
