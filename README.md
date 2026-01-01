@@ -122,10 +122,9 @@ curl -X POST http://localhost:8080/api/download \
 
 ## Configuration
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `DOWNLOADS_ROOT` | `/downloads` | Root directory for downloads |
-| `PORT` | `80` | Server port inside container |
+Downloads are stored in `/downloads` inside the container. Mount your desired host directory to this path.
+
+The server listens on port `80` inside the container - map it to your preferred host port.
 
 ## Docker Compose Example
 

@@ -41,8 +41,7 @@ WORKDIR /app
 COPY --from=builder /app/youtube-dl-server ./
 COPY --from=builder /app/public ./public/
 
-# Environment variables
-ENV DOWNLOADS_ROOT=/downloads
+# Server listens on port 80
 ENV PORT=80
 
 # Expose port 80

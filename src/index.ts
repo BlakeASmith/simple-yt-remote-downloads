@@ -2,7 +2,7 @@ import { serve, file } from "bun";
 import { startDownload, getActiveDownloads } from "./downloader";
 import { join } from "path";
 
-const DOWNLOADS_ROOT = process.env.DOWNLOADS_ROOT || "/downloads";
+const DOWNLOADS_ROOT = "/downloads";
 const PORT = parseInt(process.env.PORT || "80", 10);
 
 interface DownloadRequest {
