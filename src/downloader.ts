@@ -33,10 +33,7 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
     "--write-auto-subs",
     "--sub-langs",
     "en.*,en",
-    "--embed-subs",
     "--embed-thumbnail",
-    "--merge-output-format",
-    "mkv",
     "--no-playlist",
     "--restrict-filenames",
   ];
@@ -49,18 +46,18 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
       "--audio-quality",
       "0"
     );
-    // Remove embed-subs and merge-output-format for audio
-    const embedSubsIdx = args.indexOf("--embed-subs");
-    if (embedSubsIdx !== -1) args.splice(embedSubsIdx, 1);
-    const mergeIdx = args.indexOf("--merge-output-format");
-    if (mergeIdx !== -1) args.splice(mergeIdx, 2);
   } else {
-    // Video format selection based on resolution
     const formatStr =
       resolution === "720"
         ? "bestvideo[height<=720]+bestaudio/best[height<=720]"
         : "bestvideo[height<=1080]+bestaudio/best[height<=1080]";
-    args.push("--format", formatStr);
+    args.push(
+      "--format",
+      formatStr,
+      "--embed-subs",
+      "--merge-output-format",
+      "mkv"
+    );
   }
 
   return args;
