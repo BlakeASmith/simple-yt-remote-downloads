@@ -1,0 +1,16 @@
+{
+  "name": "youtube-download-server",
+  "version": "1.0.0",
+  "description": "A simplified YouTube downloader server using Bun and yt-dlp",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --compile --outfile youtube-dl-server",
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
