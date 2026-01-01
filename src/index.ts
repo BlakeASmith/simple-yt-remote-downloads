@@ -1,5 +1,5 @@
 import { serve, file } from "bun";
-import { startDownload, getActiveDownloads } from "./downloader";
+import { startDownload } from "./downloader";
 import { join } from "path";
 
 const DOWNLOADS_ROOT = "/downloads";
@@ -54,15 +54,6 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
   }
 }
 
-async function handleStatusRequest(): Promise<Response> {
-  const activeDownloads = getActiveDownloads();
-  return Response.json({
-    status: "ok",
-    activeDownloads,
-    downloadsRoot: DOWNLOADS_ROOT,
-  });
-}
-
 async function serveStaticFile(pathname: string): Promise<Response | null> {
   // Map routes to files
   let filePath: string;
@@ -109,14 +100,6 @@ const server = serve({
     if (pathname === "/api/download" && req.method === "POST") {
       const response = await handleDownloadRequest(req);
       // Add CORS headers to response
-      Object.entries(corsHeaders).forEach(([key, value]) => {
-        response.headers.set(key, value);
-      });
-      return response;
-    }
-
-    if (pathname === "/api/status" && req.method === "GET") {
-      const response = await handleStatusRequest();
       Object.entries(corsHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
       });

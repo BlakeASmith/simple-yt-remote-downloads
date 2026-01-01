@@ -82,18 +82,6 @@ Open your browser to `http://localhost:8080` (or your configured port) to access
 }
 ```
 
-#### Check Status
-
-**GET** `/api/status`
-
-```json
-{
-  "status": "ok",
-  "activeDownloads": ["dQw4w9WgXcQ"],
-  "downloadsRoot": "/downloads"
-}
-```
-
 ### Example cURL Commands
 
 Download video at 1080p:

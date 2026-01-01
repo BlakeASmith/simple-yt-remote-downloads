@@ -160,27 +160,6 @@
       color: #ff4757;
     }
 
-    .status {
-      margin-top: 2rem;
-      padding: 1rem;
-      background: rgba(0, 0, 0, 0.2);
-      border-radius: 8px;
-      font-size: 0.875rem;
-    }
-
-    .status h3 {
-      margin-bottom: 0.5rem;
-      color: #b4b4b4;
-    }
-
-    .status-list {
-      color: #888;
-    }
-
-    .status-list.active {
-      color: #4a9eff;
-    }
-
     .hidden {
       display: none;
     }
@@ -249,17 +228,12 @@
       <div id="message" class="message hidden"></div>
     </div>
 
-    <div class="status">
-      <h3>Server Status</h3>
-      <div id="statusInfo" class="status-list">Loading...</div>
-    </div>
   </div>
 
   <script>
     const form = document.getElementById('downloadForm');
     const messageDiv = document.getElementById('message');
     const submitBtn = document.getElementById('submitBtn');
-    const statusInfo = document.getElementById('statusInfo');
     const resolutionGroup = document.getElementById('resolutionGroup');
     const formatRadios = document.querySelectorAll('input[name="format"]');
 
@@ -277,24 +251,6 @@
       messageDiv.textContent = text;
       messageDiv.className = `message ${isError ? 'error' : 'success'}`;
       messageDiv.classList.remove('hidden');
-    }
-
-    async function fetchStatus() {
-      try {
-        const response = await fetch('/api/status');
-        const data = await response.json();
-        
-        if (data.activeDownloads && data.activeDownloads.length > 0) {
-          statusInfo.innerHTML = `<strong>Active downloads:</strong> ${data.activeDownloads.join(', ')}`;
-          statusInfo.className = 'status-list active';
-        } else {
-          statusInfo.textContent = 'No active downloads';
-          statusInfo.className = 'status-list';
-        }
-      } catch (err) {
-        statusInfo.textContent = 'Unable to fetch status';
-        statusInfo.className = 'status-list';
-      }
     }
 
     form.addEventListener('submit', async (e) => {
@@ -334,9 +290,6 @@
         if (data.success) {
           document.getElementById('url').value = '';
         }
-
-        // Refresh status
-        setTimeout(fetchStatus, 500);
       } catch (err) {
         showMessage('Failed to connect to server', true);
       } finally {
@@ -345,9 +298,6 @@
       }
     });
 
-    // Initial status fetch and periodic refresh
-    fetchStatus();
-    setInterval(fetchStatus, 5000);
   </script>
 </body>
 </html>

@@ -188,9 +188,3 @@ export async function startDownload(
   };
 }
 
-/**
- * Get list of currently active downloads
- */
-export function getActiveDownloads(): string[] {
-  return Array.from(activeDownloads);
-}
