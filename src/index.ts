@@ -35,16 +35,14 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       );
     }
 
-    const result = await startDownload({
+    const result = startDownload({
       url: body.url,
       outputPath,
       audioOnly: body.audioOnly || false,
       resolution: body.resolution || "1080",
     });
 
-    return Response.json(result, {
-      status: result.success ? 202 : 409,
-    });
+    return Response.json(result, { status: 202 });
   } catch (err) {
     console.error("Error handling download request:", err);
     return Response.json(

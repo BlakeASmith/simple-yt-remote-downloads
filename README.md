@@ -8,7 +8,7 @@ A simplified YouTube downloader server using Bun and yt-dlp. Accepts HTTP POST r
 - Audio-only download option (MP3)
 - Resolution selection (1080p or 720p)
 - Embedded subtitles for VLC compatibility
-- Duplicate download prevention
+- Duplicate download prevention (via yt-dlp archive)
 - Simple web interface
 - Fire-and-forget background downloads
 
@@ -67,20 +67,11 @@ Open your browser to `http://localhost:8080` (or your configured port) to access
 ```json
 {
   "success": true,
-  "videoId": "dQw4w9WgXcQ",
   "message": "Download started"
 }
 ```
 
-**Response (409 Conflict):**
-
-```json
-{
-  "success": false,
-  "videoId": "dQw4w9WgXcQ",
-  "message": "Video has already been downloaded"
-}
-```
+Note: Duplicate downloads are automatically skipped by yt-dlp using an archive file.
 
 ### Example cURL Commands
 
