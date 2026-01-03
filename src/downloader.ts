@@ -10,10 +10,10 @@ const DOWNLOADS_ROOT = "/downloads";
 
 /**
  * Get JavaScript runtime flag for yt-dlp
- * Configures yt-dlp to use Bun as the JS runtime
+ * Configures yt-dlp to use Node.js as the JS runtime
  */
 function getJsRuntimeFlag(): string[] {
-  return ["--js-runtimes", "bun:/usr/local/bin/bun"];
+  return ["--js-runtimes", "node"];
 }
 
 export interface DownloadOptions {
