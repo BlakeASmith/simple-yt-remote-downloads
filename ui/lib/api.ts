@@ -55,6 +55,7 @@ export interface Schedule {
   includeTranscript?: boolean;
   excludeShorts?: boolean;
   useArchiveFile?: boolean;
+  concurrentFragments?: number;
 }
 
 export interface DownloadStatus {
@@ -162,6 +163,7 @@ export interface DownloadRequest {
   includeTranscript?: boolean;
   excludeShorts?: boolean;
   useArchiveFile?: boolean;
+  concurrentFragments?: number;
 }
 
 export interface ScheduleCreateRequest extends DownloadRequest {
@@ -192,6 +194,7 @@ export function normalizeScheduleUpdates(updates: Partial<Schedule>): Partial<Sc
   if (typeof updates.includeTranscript === "boolean") out.includeTranscript = updates.includeTranscript;
   if (typeof updates.excludeShorts === "boolean") out.excludeShorts = updates.excludeShorts;
   if (typeof updates.useArchiveFile === "boolean") out.useArchiveFile = updates.useArchiveFile;
+  if (typeof updates.concurrentFragments === "number") out.concurrentFragments = updates.concurrentFragments;
   if (typeof updates.collectionId === "string") out.collectionId = updates.collectionId;
   if (updates.collectionId === undefined) {
     // omit to avoid clearing accidentally
