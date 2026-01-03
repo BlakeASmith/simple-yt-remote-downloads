@@ -13,6 +13,8 @@ export interface TrackedFile {
   intermediate: boolean;
   /** Whether the file currently exists on disk (best-effort) */
   exists: boolean;
+  /** Suggested UI state: hide deleted intermediates by default */
+  hidden: boolean;
   /** When we first observed this file (timestamp) */
   firstSeenAt: number;
   /** When we observed it being deleted (timestamp) */
@@ -32,6 +34,8 @@ export interface TrackedVideo {
   resolution?: "1080" | "720";
   fileSize?: number; // bytes
   duration?: number; // seconds
+  /** Full yt-dlp command used for this download (for reproducibility/auditing). */
+  ytdlpCommand?: string;
   /**
    * All associated files for this video (media, thumbnails, subtitles, intermediates, etc.).
    * This drives future media management features.
@@ -82,7 +86,61 @@ export function loadTrackerData(): TrackerData {
   try {
     if (existsSync(TRACKER_FILE)) {
       const data = readFileSync(TRACKER_FILE, "utf-8");
-      return JSON.parse(data);
+      const parsed = JSON.parse(data) as TrackerData;
+      // Backward-compatible normalization for older tracker formats.
+      if (parsed?.videos?.length) {
+        const now = Date.now();
+        parsed.videos = parsed.videos.map((v: any) => {
+          const files: TrackedFile[] = Array.isArray(v.files) ? v.files : [];
+          if (!Array.isArray(v.files)) {
+            // Best-effort seed from legacy fields.
+            if (typeof v.fullPath === "string" && v.fullPath) {
+              files.push({
+                path: v.fullPath,
+                kind: "media",
+                intermediate: false,
+                exists: true,
+                hidden: false,
+                firstSeenAt: now,
+              });
+            }
+            if (typeof v.thumbnailPath === "string" && v.thumbnailPath) {
+              files.push({
+                path: v.thumbnailPath,
+                kind: "thumbnail",
+                intermediate: false,
+                exists: true,
+                hidden: false,
+                firstSeenAt: now,
+              });
+            }
+          }
+          // Ensure file entries have required fields.
+          const normalizedFiles = files.map((f: any) => {
+            const intermediate = !!f.intermediate;
+            const exists = typeof f.exists === "boolean" ? f.exists : true;
+            const hidden = typeof f.hidden === "boolean" ? f.hidden : intermediate && !exists;
+            return {
+              path: String(f.path || ""),
+              kind: (f.kind as TrackedFileKind) || "other",
+              intermediate,
+              exists,
+              hidden,
+              firstSeenAt: typeof f.firstSeenAt === "number" ? f.firstSeenAt : now,
+              deletedAt: typeof f.deletedAt === "number" ? f.deletedAt : undefined,
+            } satisfies TrackedFile;
+          }).filter((f: TrackedFile) => !!f.path);
+
+          return { ...v, files: normalizedFiles } as TrackedVideo;
+        });
+      } else if (parsed && !parsed.videos) {
+        // Very old format fallback
+        (parsed as any).videos = [];
+      }
+      if (!parsed.channels) parsed.channels = [];
+      if (!parsed.playlists) parsed.playlists = [];
+      if (!parsed.lastUpdated) parsed.lastUpdated = Date.now();
+      return parsed;
     }
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error loading tracker data:`, error);
@@ -161,6 +219,7 @@ class Tracker {
           // Preserve classification if new one is "other" but previous was more specific.
           kind: f.kind === "other" && prev.kind !== "other" ? prev.kind : f.kind,
           intermediate: prev.intermediate || f.intermediate,
+          hidden: typeof f.hidden === "boolean" ? f.hidden : (prev.hidden || (prev.intermediate || f.intermediate) && !(f.exists ?? prev.exists)),
         });
       }
 

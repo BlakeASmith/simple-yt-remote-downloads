@@ -104,6 +104,16 @@ export interface TrackedVideo {
   resolution?: "1080" | "720";
   fileSize?: number;
   duration?: number;
+  ytdlpCommand?: string;
+  files?: Array<{
+    path: string;
+    kind: "media" | "thumbnail" | "subtitle" | "intermediate" | "other";
+    intermediate: boolean;
+    exists: boolean;
+    hidden: boolean;
+    firstSeenAt: number;
+    deletedAt?: number;
+  }>;
   deleted?: boolean;
   deletedAt?: number;
 }
