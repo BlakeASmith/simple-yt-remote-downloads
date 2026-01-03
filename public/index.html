@@ -183,13 +183,23 @@
         </div>
 
         <div class="form-group">
-          <label for="path">Download Path (optional, relative to downloads root)</label>
+          <label for="path" id="pathLabel">Download Path (optional, relative to downloads root)</label>
           <input 
             type="text" 
             id="path" 
             name="path" 
             placeholder="e.g., movies/comedy"
           >
+        </div>
+
+        <div class="form-group" id="playlistGroup">
+          <label class="checkbox-option">
+            <input type="checkbox" id="isPlaylist" name="isPlaylist">
+            <span>Download as Playlist (all videos will be saved to the same folder)</span>
+          </label>
+          <div id="playlistDetected" class="playlist-detected hidden" style="margin-top: 0.5rem; padding: 0.5rem; background: rgba(74, 158, 255, 0.1); border: 1px solid rgba(74, 158, 255, 0.3); border-radius: 6px; color: #4a9eff; font-size: 0.875rem;">
+            ✓ Playlist detected - all videos will download to the same folder
+          </div>
         </div>
 
         <div class="form-group options">
@@ -236,6 +246,96 @@
     const submitBtn = document.getElementById('submitBtn');
     const resolutionGroup = document.getElementById('resolutionGroup');
     const formatRadios = document.querySelectorAll('input[name="format"]');
+    const urlInput = document.getElementById('url');
+    const playlistCheckbox = document.getElementById('isPlaylist');
+    const playlistDetected = document.getElementById('playlistDetected');
+    const pathInput = document.getElementById('path');
+    const pathLabel = document.getElementById('pathLabel');
+
+    /**
+     * Detect if a URL is a YouTube playlist URL
+     * Supports:
+     * - https://www.youtube.com/playlist?list=PLxxxxx
+     * - https://youtube.com/playlist?list=PLxxxxx
+     * - https://www.youtube.com/watch?v=xxxxx&list=PLxxxxx
+     * - https://youtu.be/xxxxx?list=PLxxxxx
+     */
+    function isPlaylistURL(url) {
+      if (!url) return false;
+      
+      // Check for playlist parameter
+      if (url.includes('list=')) {
+        return true;
+      }
+      
+      // Check for /playlist path
+      try {
+        const urlObj = new URL(url);
+        if (urlObj.pathname.includes('/playlist')) {
+          return true;
+        }
+      } catch (e) {
+        // Invalid URL, ignore
+      }
+      
+      return false;
+    }
+
+    // Function to update playlist checkbox based on URL
+    function updatePlaylistDetection() {
+      const url = urlInput.value.trim();
+      const isPlaylist = isPlaylistURL(url);
+      
+      if (isPlaylist) {
+        playlistCheckbox.checked = true;
+        playlistDetected.classList.remove('hidden');
+        playlistCheckbox.removeAttribute('data-manually-checked');
+        // Update path label - will auto-fill with playlist name if empty
+        pathLabel.textContent = 'Download Path (optional - will use playlist name if empty)';
+        pathInput.required = false;
+      } else {
+        // Only uncheck if user hasn't manually checked it
+        // This allows users to manually enable playlist mode for non-playlist URLs
+        if (!playlistCheckbox.hasAttribute('data-manually-checked')) {
+          playlistCheckbox.checked = false;
+          playlistDetected.classList.add('hidden');
+          // Reset path label
+          pathLabel.textContent = 'Download Path (optional, relative to downloads root)';
+          pathInput.required = false;
+        }
+      }
+    }
+
+    // Auto-detect playlist URLs on input (typing)
+    urlInput.addEventListener('input', updatePlaylistDetection);
+    
+    // Also detect on paste events (with slight delay to allow paste to complete)
+    urlInput.addEventListener('paste', () => {
+      setTimeout(updatePlaylistDetection, 10);
+    });
+
+    // Track manual checkbox changes
+    playlistCheckbox.addEventListener('change', (e) => {
+      if (e.target.checked && !isPlaylistURL(urlInput.value.trim())) {
+        e.target.setAttribute('data-manually-checked', 'true');
+        playlistDetected.classList.add('hidden');
+        // Update path label - will auto-fill with playlist name if empty
+        pathLabel.textContent = 'Download Path (optional - will use playlist name if empty)';
+        pathInput.required = false;
+      } else if (!e.target.checked) {
+        e.target.removeAttribute('data-manually-checked');
+        if (isPlaylistURL(urlInput.value.trim())) {
+          playlistDetected.classList.remove('hidden');
+        }
+        // Reset path label
+        pathLabel.textContent = 'Download Path (optional, relative to downloads root)';
+        pathInput.required = false;
+      } else {
+        playlistDetected.classList.remove('hidden');
+        pathLabel.textContent = 'Download Path (optional - will use playlist name if empty)';
+        pathInput.required = false;
+      }
+    });
 
     // Toggle resolution visibility based on format selection
     formatRadios.forEach(radio => {
@@ -260,11 +360,14 @@
       const path = document.getElementById('path').value.trim();
       const format = document.querySelector('input[name="format"]:checked').value;
       const resolution = document.querySelector('input[name="resolution"]:checked').value;
+      const isPlaylist = document.getElementById('isPlaylist').checked;
 
       if (!url) {
         showMessage('Please enter a YouTube URL', true);
         return;
       }
+
+      // Path is optional for playlists - will use playlist name as default
 
       submitBtn.disabled = true;
       submitBtn.textContent = 'Starting...';
@@ -281,6 +384,7 @@
             path: path || undefined,
             audioOnly: format === 'audio',
             resolution,
+            isPlaylist,
           }),
         });
 

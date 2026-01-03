@@ -1,11 +1,9 @@
-version: '3'
-
 services:
   youtube-dl:
     build: .
     container_name: youtube-dl-server
     ports:
-      - "8080:80"
+      - "8082:80"
     volumes:
-      - ./downloads:/downloads
+      - "/media/blake/Seagate Portable Drive/data/yt:/downloads"
     restart: unless-stopped

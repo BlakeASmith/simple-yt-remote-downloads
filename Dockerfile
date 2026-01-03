@@ -1,5 +1,5 @@
 # Build stage - compile Bun app to binary
-FROM oven/bun:1-debian AS builder
+FROM oven/bun:1.1.0-debian AS builder
 
 WORKDIR /app
 
@@ -7,8 +7,8 @@ WORKDIR /app
 COPY package.json ./
 COPY tsconfig.json ./
 
-# Install dev dependencies for build
-RUN bun install
+# Skip bun install - no runtime dependencies needed and bun-types is built-in
+# If needed, install can be done with: RUN bun install --no-save --frozen-lockfile
 
 # Copy source code
 COPY src/ ./src/

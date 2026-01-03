@@ -1,5 +1,5 @@
 import { serve, file } from "bun";
-import { startDownload } from "./downloader";
+import { startDownload, getPlaylistName } from "./downloader";
 import { join } from "path";
 
 const DOWNLOADS_ROOT = "/downloads";
@@ -10,6 +10,7 @@ interface DownloadRequest {
   path?: string;
   audioOnly?: boolean;
   resolution?: "1080" | "720";
+  isPlaylist?: boolean;
 }
 
 async function handleDownloadRequest(req: Request): Promise<Response> {
@@ -23,8 +24,43 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       );
     }
 
+    // For playlists, use playlist name as default if no path provided
+    let relativePath = body.path || "";
+    
+    // Detect playlist from URL or isPlaylist flag
+    const isPlaylistRequest = body.isPlaylist || body.url.includes('list=') || body.url.includes('/playlist');
+    
+    if (isPlaylistRequest && !relativePath) {
+      // Extract playlist ID from URL as immediate fallback
+      const playlistIdMatch = body.url.match(/[?&]list=([^&]+)/);
+      if (playlistIdMatch && playlistIdMatch[1]) {
+        relativePath = `playlist-${playlistIdMatch[1]}`;
+      } else {
+        // If we can't extract playlist ID, return error
+        return Response.json(
+          { success: false, message: "Could not determine playlist ID. Please specify a folder name." },
+          { status: 400 }
+        );
+      }
+      
+      // Try to get the actual playlist name (async, with timeout)
+      // This will override the ID if successful
+      try {
+        const playlistName = await Promise.race([
+          getPlaylistName(body.url),
+          new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 3000)) // 3 second timeout
+        ]);
+        
+        if (playlistName) {
+          relativePath = playlistName;
+        }
+      } catch (error) {
+        // If getting playlist name fails, use the ID fallback we already set
+        // relativePath is already set to playlist ID, so we're good
+      }
+    }
+
     // Resolve output path relative to downloads root
-    const relativePath = body.path || "";
     const outputPath = join(DOWNLOADS_ROOT, relativePath);
 
     // Validate path doesn't escape downloads root
@@ -40,6 +76,7 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       outputPath,
       audioOnly: body.audioOnly || false,
       resolution: body.resolution || "1080",
+      isPlaylist: body.isPlaylist || false,
     });
 
     return Response.json(result, { status: 202 });
@@ -54,12 +91,16 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
 
 async function serveStaticFile(pathname: string): Promise<Response | null> {
   // Map routes to files
+  // Use process.cwd() for compiled binaries - public folder is at /app/public/ in container
+  const publicDir = join(process.cwd(), "public");
   let filePath: string;
 
   if (pathname === "/" || pathname === "/index.html") {
-    filePath = join(import.meta.dir, "../public/index.html");
+    filePath = join(publicDir, "index.html");
   } else if (pathname.startsWith("/public/")) {
-    filePath = join(import.meta.dir, "..", pathname);
+    // Remove /public prefix and resolve relative to public directory
+    const relativePath = pathname.slice("/public/".length);
+    filePath = join(publicDir, relativePath);
   } else {
     return null;
   }
