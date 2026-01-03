@@ -83,6 +83,12 @@ export interface DownloadLogResponse {
   message?: string;
 }
 
+export interface LogsByVideoResponse {
+  success: boolean;
+  downloadIds?: string[];
+  message?: string;
+}
+
 export interface TrackerStats {
   totalVideos: number;
   totalChannels: number;
