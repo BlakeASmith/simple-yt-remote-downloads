@@ -68,8 +68,19 @@ export interface DownloadStatus {
   completedAt?: number;
   error?: string;
   outputPath: string;
+  currentFile?: string;
+  currentPath?: string;
+  finalFile?: string;
+  finalPath?: string;
+  logAvailable?: boolean;
   format: "video" | "audio";
   resolution?: "1080" | "720";
+}
+
+export interface DownloadLogResponse {
+  success: boolean;
+  log?: string;
+  message?: string;
 }
 
 export interface TrackerStats {
@@ -93,6 +104,16 @@ export interface TrackedVideo {
   resolution?: "1080" | "720";
   fileSize?: number;
   duration?: number;
+  ytdlpCommand?: string;
+  files?: Array<{
+    path: string;
+    kind: "media" | "thumbnail" | "subtitle" | "intermediate" | "other";
+    intermediate: boolean;
+    exists: boolean;
+    hidden: boolean;
+    firstSeenAt: number;
+    deletedAt?: number;
+  }>;
   deleted?: boolean;
   deletedAt?: number;
 }

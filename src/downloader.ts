@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, statSync } from "fs";
-import { join, relative } from "path";
+import { basename, join, relative } from "path";
 import { getTracker } from "./tracker";
 import { getDownloadStatusTracker } from "./download-status";
 import { getCollectionsManager } from "./collections";
+import type { TrackedFile, TrackedFileKind } from "./tracker";
 
 const ARCHIVE_FILE = "/downloads/.archive";
 const DOWNLOADS_ROOT = "/downloads";
@@ -548,9 +549,11 @@ async function processDownloadedVideo(
   videoId: string,
   videoUrl: string,
   options: DownloadOptions,
-  metadata: { title: string; channel: string; channelId?: string; duration?: number; playlistId?: string; playlistTitle?: string }
+  metadata: { title: string; channel: string; channelId?: string; duration?: number; playlistId?: string; playlistTitle?: string },
+  ctx: { downloadId: string; ytdlpCommand: string }
 ): Promise<void> {
   const tracker = getTracker();
+  const statusTracker = getDownloadStatusTracker();
   
   // Calculate relative path safely
   let relativePath: string;
@@ -594,6 +597,111 @@ async function processDownloadedVideo(
     console.log(`[${new Date().toISOString()}] Could not find file for video ${videoId}:`, error);
   }
 
+  function classifyPath(p: string): { kind: TrackedFileKind; intermediate: boolean } {
+    const lower = p.toLowerCase();
+    const ext = lower.includes(".") ? lower.slice(lower.lastIndexOf(".")) : "";
+    const isPart = lower.endsWith(".part") || lower.endsWith(".ytdl") || lower.endsWith(".temp");
+    const hasFormatTag = /\.f\d{1,4}\./i.test(lower);
+    const intermediate = isPart || hasFormatTag;
+
+    if ([".jpg", ".jpeg", ".png", ".webp"].includes(ext)) return { kind: "thumbnail", intermediate };
+    if ([".vtt", ".srt", ".ass", ".ssa", ".lrc"].includes(ext)) return { kind: "subtitle", intermediate };
+    if ([".mkv", ".mp4", ".webm", ".mp3", ".m4a", ".opus", ".wav", ".flac"].includes(ext)) return { kind: "media", intermediate };
+    return { kind: intermediate ? "intermediate" : "other", intermediate };
+  }
+
+  function toTrackedFile(p: string, firstSeenAt: number, deletedAt?: number): TrackedFile {
+    const { kind, intermediate } = classifyPath(p);
+    const exists = existsSync(p);
+    const hidden = intermediate && !exists;
+    return { path: p, kind, intermediate, exists, hidden, firstSeenAt, deletedAt };
+  }
+
+  function extractPathsFromLog(log: string): string[] {
+    const out: string[] = [];
+    const lines = log.split(/\r?\n/);
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      // Destination: /path/to/file
+      const dest = line.match(/Destination:\s+(.*)$/);
+      if (dest?.[1]) out.push(dest[1].replace(/^"+|"+$/g, ""));
+      // Merging formats into "/path/to/file"
+      const merge = line.match(/Merging formats into\s+"([^"]+)"/);
+      if (merge?.[1]) out.push(merge[1]);
+      // Extracting audio to "/path/to/file"
+      const ex1 = line.match(/Extracting audio to\s+"([^"]+)"/);
+      if (ex1?.[1]) out.push(ex1[1]);
+      // Writing ... to: /path/to/file
+      const write = line.match(/Writing .* to:\s+(.*)$/i);
+      if (write?.[1]) out.push(write[1].replace(/^"+|"+$/g, ""));
+      // Writing video subtitles to: /path/to/file
+      const subs = line.match(/Writing video subtitles to:\s+(.*)$/i);
+      if (subs?.[1]) out.push(subs[1].replace(/^"+|"+$/g, ""));
+      const autosubs = line.match(/Writing automatic subtitles to:\s+(.*)$/i);
+      if (autosubs?.[1]) out.push(autosubs[1].replace(/^"+|"+$/g, ""));
+      // Writing thumbnail to: ...
+      const thumb = line.match(/Writing thumbnail to:\s+(.*)$/i);
+      if (thumb?.[1]) out.push(thumb[1].replace(/^"+|"+$/g, ""));
+      // Writing video thumbnail to: ...
+      const vthumb = line.match(/Writing video thumbnail to:\s+(.*)$/i);
+      if (vthumb?.[1]) out.push(vthumb[1].replace(/^"+|"+$/g, ""));
+    }
+    // de-dupe, keep order
+    const seen = new Set<string>();
+    const uniq: string[] = [];
+    for (const p of out) {
+      if (!p) continue;
+      if (seen.has(p)) continue;
+      seen.add(p);
+      uniq.push(p);
+    }
+    return uniq;
+  }
+
+  // Build full associated file set (media + thumbnails + subtitles + intermediates).
+  const now = Date.now();
+  const filesByPath = new Map<string, TrackedFile>();
+
+  // 1) Scan directory for anything containing the video id (captures thumbnails/subs).
+  try {
+    if (existsSync(normalizedPath)) {
+      const glob = new Bun.Glob(`*[${videoId}]*`);
+      for await (const file of glob.scan(normalizedPath)) {
+        const full = join(normalizedPath, file);
+        if (!existsSync(full)) continue;
+        const st = statSync(full);
+        if (!st.isFile()) continue;
+        filesByPath.set(full, toTrackedFile(full, now));
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2) Parse yt-dlp log for paths (captures intermediates that may have been deleted).
+  try {
+    const lr = statusTracker.readLog(ctx.downloadId);
+    if (lr.ok) {
+      for (const p of extractPathsFromLog(lr.log)) {
+        // Only associate paths that clearly belong to this video id.
+        if (!p.includes(`[${videoId}]`)) continue;
+        // If the file no longer exists, mark deletedAt so UI can hide it.
+        const exists = existsSync(p);
+        const deletedAt = exists ? undefined : now;
+        filesByPath.set(p, toTrackedFile(p, now, deletedAt));
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Ensure the main media path is present even if scan missed it.
+  const bestFullPath = filePath || join(normalizedPath, `${metadata.title} [${videoId}]`);
+  if (bestFullPath) {
+    filesByPath.set(bestFullPath, toTrackedFile(bestFullPath, now));
+  }
+
   // Track the video
   tracker.trackVideo({
     id: videoId,
@@ -602,11 +710,13 @@ async function processDownloadedVideo(
     channelId: metadata.channelId,
     url: videoUrl,
     relativePath,
-    fullPath: filePath || join(normalizedPath, `${metadata.title} [${videoId}]`),
+    fullPath: bestFullPath,
     format: options.audioOnly ? "audio" : "video",
     resolution: options.audioOnly ? undefined : options.resolution,
     fileSize,
     duration: metadata.duration,
+    ytdlpCommand: ctx.ytdlpCommand,
+    files: Array.from(filesByPath.values()),
   });
 
   // Track channel if applicable
@@ -700,6 +810,9 @@ export function startDownload(options: DownloadOptions): DownloadResult {
       const line = raw.trim();
       if (!line) return;
 
+      // Persist full yt-dlp output for UI debugging.
+      statusTracker.appendLog(downloadId, raw);
+
       // Keep a short tail of stderr-ish lines for debugging on failure.
       if (line.toLowerCase().includes("error") || line.toLowerCase().includes("traceback")) {
         recentErrors.push(line);
@@ -711,6 +824,10 @@ export function startDownload(options: DownloadOptions): DownloadResult {
       const destMatch = line.match(/Destination:\s+(.*)$/);
       if (destMatch?.[1]) {
         currentDestination = destMatch[1].replace(/^"+|"+$/g, "");
+        statusTracker.updateStatus(downloadId, {
+          currentPath: currentDestination,
+          currentFile: basename(currentDestination),
+        });
         return;
       }
 
@@ -720,6 +837,10 @@ export function startDownload(options: DownloadOptions): DownloadResult {
       if (mergeMatch?.[1]) {
         finalOutputFile = mergeMatch[1];
         statusTracker.updateStatus(downloadId, { status: "processing" });
+        statusTracker.updateStatus(downloadId, {
+          finalPath: finalOutputFile,
+          finalFile: basename(finalOutputFile),
+        });
         return;
       }
 
@@ -729,6 +850,10 @@ export function startDownload(options: DownloadOptions): DownloadResult {
       if (extractMatch?.[1]) {
         finalOutputFile = extractMatch[1].replace(/^"+|"+$/g, "");
         statusTracker.updateStatus(downloadId, { status: "processing" });
+        statusTracker.updateStatus(downloadId, {
+          finalPath: finalOutputFile,
+          finalFile: basename(finalOutputFile),
+        });
         return;
       }
 
@@ -833,7 +958,10 @@ export function startDownload(options: DownloadOptions): DownloadResult {
     if (!options.isPlaylist && !options.isChannel && singleVideoMetadata) {
       const videoUrl = `https://www.youtube.com/watch?v=${singleVideoMetadata.id}`;
       try {
-        await processDownloadedVideo(singleVideoMetadata.id, videoUrl, options, singleVideoMetadata);
+        await processDownloadedVideo(singleVideoMetadata.id, videoUrl, options, singleVideoMetadata, {
+          downloadId,
+          ytdlpCommand: `yt-dlp ${args.join(" ")}`,
+        });
       } catch (err) {
         console.error(`[${new Date().toISOString()}] Error tracking completed video:`, err);
       }

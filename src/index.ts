@@ -471,6 +471,21 @@ const server = serve({
       return response;
     }
 
+    // Download logs API route: GET /api/downloads/logs/:id
+    const downloadLogsMatch = pathname.match(/^\/api\/downloads\/logs\/([^\/]+)$/);
+    if (downloadLogsMatch && req.method === "GET") {
+      const id = downloadLogsMatch[1];
+      const statusTracker = getDownloadStatusTracker();
+      const r = statusTracker.readLog(id);
+      const response = r.ok
+        ? Response.json({ success: true, log: r.log })
+        : Response.json({ success: false, message: r.message }, { status: 404 });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
     // Collections API routes
     if (pathname === "/api/collections" && req.method === "GET") {
       const collectionsManager = getCollectionsManager();
