@@ -1,4 +1,3 @@
-import { spawn } from "bun";
 import { existsSync, mkdirSync, statSync } from "fs";
 import { join, relative } from "path";
 import { getTracker } from "./tracker";
@@ -394,6 +393,8 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
     "--output",
     outputTemplate,
     "--restrict-filenames",
+    // Make progress machine-readable (one update per line)
+    "--newline",
   ];
 
   // Add archive file if enabled
@@ -462,6 +463,82 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
   }
 
   return args;
+}
+
+function clampProgress(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function parseHumanSizeToBytes(n: string, unit: string): number | null {
+  const value = Number.parseFloat(n);
+  if (!Number.isFinite(value)) return null;
+  const u = unit.toLowerCase();
+  const pow = (base: number, exp: number) => Math.pow(base, exp);
+
+  // Support both SI and IEC-ish suffixes as yt-dlp prints them (KiB/MiB/GiB and KB/MB/GB).
+  if (u === "b") return value;
+  if (u === "kib") return value * pow(1024, 1);
+  if (u === "mib") return value * pow(1024, 2);
+  if (u === "gib") return value * pow(1024, 3);
+  if (u === "tib") return value * pow(1024, 4);
+  if (u === "kb") return value * pow(1000, 1);
+  if (u === "mb") return value * pow(1000, 2);
+  if (u === "gb") return value * pow(1000, 3);
+  if (u === "tb") return value * pow(1000, 4);
+  return null;
+}
+
+async function streamTextLines(
+  stream: ReadableStream<Uint8Array> | null | undefined,
+  onLine: (line: string) => void
+): Promise<void> {
+  if (!stream) return;
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, idx).replace(/\r$/, "");
+      buf = buf.slice(idx + 1);
+      if (line.length) onLine(line);
+    }
+  }
+  buf += decoder.decode();
+  const tail = buf.trim();
+  if (tail) onLine(tail);
+}
+
+async function waitForFileStable(path: string, opts?: { timeoutMs?: number; stableMs?: number }): Promise<boolean> {
+  const timeoutMs = opts?.timeoutMs ?? 30_000;
+  const stableMs = opts?.stableMs ?? 1_500;
+  const started = Date.now();
+  let lastSize: number | null = null;
+  let lastChange = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    if (!existsSync(path)) {
+      await new Promise((r) => setTimeout(r, 250));
+      continue;
+    }
+    try {
+      const size = statSync(path).size;
+      if (lastSize === null || size !== lastSize) {
+        lastSize = size;
+        lastChange = Date.now();
+      } else if (Date.now() - lastChange >= stableMs) {
+        return true;
+      }
+    } catch {
+      // transient
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
 }
 
 /**
@@ -586,114 +663,182 @@ export function startDownload(options: DownloadOptions): DownloadResult {
     resolution: options.audioOnly ? undefined : options.resolution,
   });
 
-  // Track downloads asynchronously
-  (async () => {
-    try {
-      if (options.isPlaylist || options.isChannel) {
-        // For playlists/channels, get video IDs first, then track each
-        const videoIds = await getPlaylistVideoIds(options.url, options.maxVideos);
-        console.log(`[${new Date().toISOString()}] Found ${videoIds.length} videos to track`);
-        
-        // Update status with video count
-        statusTracker.updateStatus(downloadId, {
-          progress: 0,
-          status: "downloading",
-        });
-        
-        // Track each video (metadata will be fetched as download progresses)
-        let completedCount = 0;
-        for (const videoId of videoIds) {
-          const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-          extractVideoMetadata(videoUrl)
-            .then(metadata => {
-              if (metadata) {
-                // Update status with video info
-                if (completedCount === 0) {
-                  statusTracker.updateStatus(downloadId, {
-                    title: metadata.title,
-                    channel: metadata.channel,
-                  });
-                }
-                
-                // Delay tracking to allow download to complete
-                setTimeout(() => {
-                  processDownloadedVideo(metadata.id, videoUrl, options, metadata)
-                    .then(() => {
-                      completedCount++;
-                      const progress = Math.floor((completedCount / videoIds.length) * 100);
-                      statusTracker.updateStatus(downloadId, { progress });
-                      
-                      if (completedCount >= videoIds.length) {
-                        statusTracker.updateStatus(downloadId, {
-                          status: "completed",
-                          progress: 100,
-                        });
-                      }
-                    })
-                    .catch(err => {
-                      console.error(`[${new Date().toISOString()}] Error tracking video ${videoId}:`, err);
-                      completedCount++;
-                      if (completedCount >= videoIds.length) {
-                        statusTracker.updateStatus(downloadId, {
-                          status: "completed",
-                          progress: 100,
-                        });
-                      }
-                    });
-                }, 5000); // Wait 5 seconds for download to start
-              }
-            })
-            .catch(err => {
-              console.error(`[${new Date().toISOString()}] Error extracting metadata for ${videoId}:`, err);
-            });
-        }
-      } else {
-        // For single videos, extract metadata and track immediately
-        const metadata = await extractVideoMetadata(options.url);
-        if (metadata) {
-          const videoUrl = `https://www.youtube.com/watch?v=${metadata.id}`;
-          
-          // Update status with video info
+  // Fire off metadata extraction for nicer UI labels (doesn't drive completion).
+  let singleVideoMetadata:
+    | { id: string; title: string; channel: string; channelId?: string; duration?: number; playlistId?: string; playlistTitle?: string }
+    | null = null;
+  if (!options.isPlaylist && !options.isChannel) {
+    (async () => {
+      try {
+        singleVideoMetadata = await extractVideoMetadata(options.url);
+        if (singleVideoMetadata) {
           statusTracker.updateStatus(downloadId, {
-            title: metadata.title,
-            channel: metadata.channel,
-            progress: 0,
+            title: singleVideoMetadata.title,
+            channel: singleVideoMetadata.channel,
           });
-          
-          // Delay tracking to allow download to start
-          setTimeout(() => {
-            processDownloadedVideo(metadata.id, videoUrl, options, metadata)
-              .then(() => {
-                statusTracker.updateStatus(downloadId, {
-                  status: "completed",
-                  progress: 100,
-                });
-              })
-              .catch(err => {
-                console.error(`[${new Date().toISOString()}] Error tracking video:`, err);
-                statusTracker.updateStatus(downloadId, {
-                  status: "completed",
-                  progress: 100,
-                });
-              });
-          }, 2000);
         }
+      } catch {
+        // ignore
       }
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] Error setting up tracking:`, error);
+    })();
+  }
+
+  // Spawn yt-dlp process and actively track its stdout/stderr + filesystem state.
+  (async () => {
+    let currentDestination: string | null = null; // file being downloaded (may be .part)
+    let finalOutputFile: string | null = null; // merged/extracted final output file
+    let inferredTotalBytes: number | null = null;
+    const recentErrors: string[] = [];
+
+    const proc = Bun.spawn({
+      cmd: ["yt-dlp", ...args],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const onLine = (raw: string) => {
+      const line = raw.trim();
+      if (!line) return;
+
+      // Keep a short tail of stderr-ish lines for debugging on failure.
+      if (line.toLowerCase().includes("error") || line.toLowerCase().includes("traceback")) {
+        recentErrors.push(line);
+        if (recentErrors.length > 15) recentErrors.shift();
+      }
+
+      // Destination files (often for fragments or intermediate formats).
+      // Example: [download] Destination: /downloads/foo/Title [id].f137.mp4
+      const destMatch = line.match(/Destination:\s+(.*)$/);
+      if (destMatch?.[1]) {
+        currentDestination = destMatch[1].replace(/^"+|"+$/g, "");
+        return;
+      }
+
+      // Final merged output (video+audio).
+      // Example: [Merger] Merging formats into "/downloads/foo/Title [id].mkv"
+      const mergeMatch = line.match(/Merging formats into\s+"([^"]+)"/);
+      if (mergeMatch?.[1]) {
+        finalOutputFile = mergeMatch[1];
+        statusTracker.updateStatus(downloadId, { status: "processing" });
+        return;
+      }
+
+      // Final extracted audio.
+      // Example: [ExtractAudio] Destination: /downloads/foo/Title [id].mp3
+      const extractMatch = line.match(/Extracting audio to\s+"([^"]+)"/) || line.match(/\[ExtractAudio\]\s+Destination:\s+(.*)$/);
+      if (extractMatch?.[1]) {
+        finalOutputFile = extractMatch[1].replace(/^"+|"+$/g, "");
+        statusTracker.updateStatus(downloadId, { status: "processing" });
+        return;
+      }
+
+      // Generic post-processing hints.
+      if (line.includes("[Merger]") || line.includes("[ExtractAudio]") || line.includes("[Fixup") || line.includes("Post-process")) {
+        statusTracker.updateStatus(downloadId, { status: "processing" });
+      }
+
+      // Progress lines.
+      // Example: [download]  12.3% of 123.45MiB at 3.45MiB/s ETA 00:12
+      const pMatch = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
+      if (pMatch?.[1]) {
+        const parsedPercent = Number.parseFloat(pMatch[1]);
+
+        // Try to infer total bytes from the same line.
+        const totalMatch = line.match(/\sof\s+~?\s*([\d.]+)\s*([KMGT]i?B|B)\b/i);
+        if (totalMatch?.[1] && totalMatch?.[2]) {
+          const tb = parseHumanSizeToBytes(totalMatch[1], totalMatch[2]);
+          if (tb && tb > 0) inferredTotalBytes = tb;
+        }
+
+        // Use filesystem as the source of truth when we can.
+        let effectivePercent = parsedPercent;
+        if (currentDestination && inferredTotalBytes && inferredTotalBytes > 0) {
+          const partPath = `${currentDestination}.part`;
+          const fileToStat = existsSync(partPath) ? partPath : currentDestination;
+          try {
+            const sz = statSync(fileToStat).size;
+            const fsPercent = (sz / inferredTotalBytes) * 100;
+            // Prefer FS-derived percent if it looks sane.
+            if (Number.isFinite(fsPercent) && fsPercent >= 0 && fsPercent <= 100) {
+              effectivePercent = Math.max(effectivePercent, fsPercent);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        // Don't report "completed" just because we hit 100% download; merging may still be running.
+        if (effectivePercent >= 100) {
+          statusTracker.updateStatus(downloadId, { progress: 99, status: "processing" });
+        } else {
+          statusTracker.updateStatus(downloadId, { progress: clampProgress(effectivePercent), status: "downloading" });
+        }
+        return;
+      }
+    };
+
+    const stdoutP = streamTextLines(proc.stdout, onLine);
+    const stderrP = streamTextLines(proc.stderr, onLine);
+
+    const exitCode = await proc.exited;
+    await Promise.allSettled([stdoutP, stderrP]);
+
+    if (exitCode !== 0) {
       statusTracker.updateStatus(downloadId, {
         status: "failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: recentErrors.slice(-5).join(" | ") || `yt-dlp exited with code ${exitCode}`,
       });
+      return;
+    }
+
+    // Confirm final file exists and is stable before marking completed.
+    // Prefer the explicit merge/extract destination; fallback to the last destination (non-.part),
+    // and finally metadata-based scan for single videos.
+    let finalPath = finalOutputFile;
+    if (!finalPath && currentDestination && existsSync(currentDestination) && !existsSync(`${currentDestination}.part`)) {
+      finalPath = currentDestination;
+    }
+    if (!finalPath && singleVideoMetadata?.id) {
+      try {
+        const normalizedPath = options.outputPath.replace(/\/$/, "");
+        if (existsSync(normalizedPath)) {
+          const glob = new Bun.Glob(`*[${singleVideoMetadata.id}]*`);
+          let newest: { path: string; mtimeMs: number } | null = null;
+          for await (const file of glob.scan(normalizedPath)) {
+            const fullPath = join(normalizedPath, file);
+            if (!existsSync(fullPath)) continue;
+            if (fullPath.endsWith(".part") || fullPath.endsWith(".ytdl")) continue;
+            const st = statSync(fullPath);
+            if (!st.isFile()) continue;
+            if (!newest || st.mtimeMs > newest.mtimeMs) newest = { path: fullPath, mtimeMs: st.mtimeMs };
+          }
+          if (newest) finalPath = newest.path;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    if (finalPath) {
+      const ok = await waitForFileStable(finalPath, { timeoutMs: 60_000, stableMs: 1_500 });
+      if (!ok) {
+        statusTracker.updateStatus(downloadId, { status: "failed", error: "Final output file did not stabilize in time" });
+        return;
+      }
+    }
+
+    statusTracker.updateStatus(downloadId, { status: "completed", progress: 100 });
+
+    // Persist to tracker after completion for single-video downloads (ensures merged/extracted file exists).
+    if (!options.isPlaylist && !options.isChannel && singleVideoMetadata) {
+      const videoUrl = `https://www.youtube.com/watch?v=${singleVideoMetadata.id}`;
+      try {
+        await processDownloadedVideo(singleVideoMetadata.id, videoUrl, options, singleVideoMetadata);
+      } catch (err) {
+        console.error(`[${new Date().toISOString()}] Error tracking completed video:`, err);
+      }
     }
   })();
-
-  // Spawn yt-dlp process (fire and forget)
-  spawn({
-    cmd: ["yt-dlp", ...args],
-    stdout: "inherit",
-    stderr: "inherit",
-  });
 
   return {
     success: true,
