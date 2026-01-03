@@ -830,6 +830,8 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
   const [playlists, setPlaylists] = useState<TrackedPlaylist[]>([]);
   const [q, setQ] = useState("");
   const [logsById, setLogsById] = useState<Record<string, { loading: boolean; log?: string; error?: string }>>({});
+  const [videoLogIds, setVideoLogIds] = useState<Record<string, string[]>>({});
+  const [expandedVideos, setExpandedVideos] = useState<Set<string>>(new Set());
 
   // Keep tracking tab in the hash so refresh/back keeps your place.
   useEffect(() => {
@@ -870,6 +872,14 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
       ...prev,
       [id]: { loading: false, error: res.ok ? res.data.message || "Failed to load logs" : res.message },
     }));
+  }
+
+  async function findLogsForVideo(videoId: string) {
+    if (videoLogIds[videoId]) return; // Already loaded
+    const res = await apiGet<{ success: boolean; downloadIds?: string[]; message?: string }>(`/api/downloads/logs/by-video/${videoId}`);
+    if (res.ok && res.data.success && res.data.downloadIds) {
+      setVideoLogIds((prev) => ({ ...prev, [videoId]: res.data.downloadIds || [] }));
+    }
   }
 
   async function loadAll() {
@@ -1025,37 +1035,167 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     .slice()
                     .sort((a, b) => (b.downloadedAt || 0) - (a.downloadedAt || 0))
                     .slice(0, 200)
-                    .map((v) => (
-                      <div key={`${v.id}:${v.relativePath}`} className={cx("rounded-xl bg-white/3 p-4 ring-1 ring-white/8 overflow-hidden", v.deleted ? "opacity-60" : "")}>
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <div className="truncate text-sm font-semibold">{v.title}</div>
-                              <Badge tone="muted">{v.format === "audio" ? "Audio" : `Video ${v.resolution || ""}`.trim()}</Badge>
-                              {v.deleted ? <Badge tone="bad">Deleted</Badge> : null}
+                    .map((v) => {
+                      const videoKey = `${v.id}:${v.relativePath}`;
+                      const isExpanded = expandedVideos.has(videoKey);
+                      const logIds = videoLogIds[v.id] || [];
+                      return (
+                        <div key={videoKey} className={cx("rounded-xl bg-white/3 p-4 ring-1 ring-white/8 overflow-hidden", v.deleted ? "opacity-60" : "")}>
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="truncate text-sm font-semibold">{v.title}</div>
+                                <Badge tone="muted">{v.format === "audio" ? "Audio" : `Video ${v.resolution || ""}`.trim()}</Badge>
+                                {v.deleted ? <Badge tone="bad">Deleted</Badge> : null}
+                              </div>
+                              <div className="mt-1 truncate text-xs text-white/55">
+                                {v.channel} · {v.relativePath}
+                              </div>
+                              <div className="mt-1 text-xs text-white/55">
+                                <span className="truncate block">File: {v.fullPath ? v.fullPath.split("/").pop() : "unknown"}</span>
+                                <span className="hidden sm:inline">
+                                  {" "}
+                                  · <span className="break-all">{v.fullPath}</span>
+                                </span>
+                              </div>
+                              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
+                                <span>Size: {formatBytes(v.fileSize)}</span>
+                                <span>Duration: {formatDuration(v.duration)}</span>
+                                <span>Downloaded: {formatTime(v.downloadedAt)}</span>
+                              </div>
                             </div>
-                            <div className="mt-1 truncate text-xs text-white/55">
-                              {v.channel} · {v.relativePath}
-                            </div>
-                            <div className="mt-1 text-xs text-white/55">
-                              <span className="truncate block">File: {v.fullPath ? v.fullPath.split("/").pop() : "unknown"}</span>
-                              <span className="hidden sm:inline">
-                                {" "}
-                                · <span className="break-all">{v.fullPath}</span>
-                              </span>
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
-                              <span>Size: {formatBytes(v.fileSize)}</span>
-                              <span>Duration: {formatDuration(v.duration)}</span>
-                              <span>Downloaded: {formatTime(v.downloadedAt)}</span>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <a className="text-sm font-semibold text-sky-300 hover:text-sky-200" href={v.url} target="_blank" rel="noreferrer">
+                                Open
+                              </a>
+                              <Button
+                                variant="ghost"
+                                onClick={() => {
+                                  const newExpanded = new Set(expandedVideos);
+                                  if (isExpanded) {
+                                    newExpanded.delete(videoKey);
+                                  } else {
+                                    newExpanded.add(videoKey);
+                                    void findLogsForVideo(v.id);
+                                  }
+                                  setExpandedVideos(newExpanded);
+                                }}
+                              >
+                                {isExpanded ? "Hide details" : "Show details"}
+                              </Button>
                             </div>
                           </div>
-                          <a className="shrink-0 text-sm font-semibold text-sky-300 hover:text-sky-200" href={v.url} target="_blank" rel="noreferrer">
-                            Open
-                          </a>
+
+                          {isExpanded ? (
+                            <div className="mt-4 grid gap-4 rounded-lg bg-black/20 p-4 ring-1 ring-white/10">
+                              <div className="grid gap-3 text-xs">
+                                <div className="grid gap-1">
+                                  <div className="font-semibold text-white/85">Video Information</div>
+                                  <div className="grid gap-1 pl-2 text-white/70">
+                                    <div>Video ID: <span className="font-mono text-white/85">{v.id}</span></div>
+                                    <div>Title: <span className="text-white/85">{v.title}</span></div>
+                                    <div>Channel: <span className="text-white/85">{v.channel}</span></div>
+                                    {v.channelId ? <div>Channel ID: <span className="font-mono text-white/85">{v.channelId}</span></div> : null}
+                                    <div>URL: <a href={v.url} target="_blank" rel="noreferrer" className="text-sky-300 hover:text-sky-200 break-all">{v.url}</a></div>
+                                  </div>
+                                </div>
+
+                                <div className="grid gap-1">
+                                  <div className="font-semibold text-white/85">Download Details</div>
+                                  <div className="grid gap-1 pl-2 text-white/70">
+                                    <div>Format: <span className="text-white/85">{v.format === "audio" ? "Audio (MP3)" : `Video (${v.resolution || "1080"}p)`}</span></div>
+                                    <div>Downloaded: <span className="text-white/85">{formatTime(v.downloadedAt)}</span></div>
+                                    {v.deleted ? (
+                                      <>
+                                        <div>Status: <span className="text-red-300">Deleted</span></div>
+                                        {v.deletedAt ? <div>Deleted at: <span className="text-white/85">{formatTime(v.deletedAt)}</span></div> : null}
+                                      </>
+                                    ) : (
+                                      <div>Status: <span className="text-green-300">Available</span></div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="grid gap-1">
+                                  <div className="font-semibold text-white/85">File Information</div>
+                                  <div className="grid gap-1 pl-2 text-white/70">
+                                    <div>Full Path: <span className="font-mono break-all text-white/85">{v.fullPath}</span></div>
+                                    <div>Relative Path: <span className="font-mono text-white/85">{v.relativePath}</span></div>
+                                    {v.fileSize ? <div>File Size: <span className="text-white/85">{formatBytes(v.fileSize)}</span></div> : null}
+                                    {v.duration ? <div>Duration: <span className="text-white/85">{formatDuration(v.duration)}</span></div> : null}
+                                  </div>
+                                </div>
+
+                                {v.files && v.files.length > 0 ? (
+                                  <div className="grid gap-1">
+                                    <div className="font-semibold text-white/85">Associated Files ({v.files.length})</div>
+                                    <div className="grid gap-1 pl-2 max-h-48 overflow-auto">
+                                      {v.files
+                                        .filter((f) => !f.hidden)
+                                        .map((f, idx) => (
+                                          <div key={idx} className="text-white/70">
+                                            <span className={cx("font-mono text-xs", f.exists ? "text-white/85" : "text-white/50 line-through")}>
+                                              {f.path.split("/").pop()}
+                                            </span>
+                                            <span className="ml-2 text-white/50">
+                                              ({f.kind}
+                                              {f.intermediate ? ", intermediate" : ""}
+                                              {!f.exists ? ", deleted" : ""})
+                                            </span>
+                                          </div>
+                                        ))}
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {v.ytdlpCommand ? (
+                                  <div className="grid gap-1">
+                                    <div className="font-semibold text-white/85">yt-dlp Command</div>
+                                    <div className="pl-2">
+                                      <pre className="overflow-x-auto rounded bg-black/30 p-2 text-[10px] font-mono text-white/80 ring-1 ring-white/10">
+                                        {v.ytdlpCommand}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                ) : null}
+
+                                {logIds.length > 0 ? (
+                                  <div className="grid gap-1">
+                                    <div className="font-semibold text-white/85">Download Logs</div>
+                                    <div className="grid gap-2 pl-2">
+                                      {logIds.map((logId) => (
+                                        <details
+                                          key={logId}
+                                          className="rounded-lg bg-black/20 ring-1 ring-white/10"
+                                          onToggle={(e) => {
+                                            if (e.currentTarget.open) void ensureLogs(logId);
+                                          }}
+                                        >
+                                          <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-white/70 hover:text-white">
+                                            Log: {logId}
+                                          </summary>
+                                          <div className="px-3 pb-3">
+                                            {logsById[logId]?.loading ? <div className="text-xs text-white/60">Loading…</div> : null}
+                                            {logsById[logId]?.error ? <div className="text-xs text-red-200">{logsById[logId]?.error}</div> : null}
+                                            {typeof logsById[logId]?.log === "string" ? (
+                                              <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] leading-relaxed text-white/80 ring-1 ring-white/10">
+                                                {logsById[logId]?.log || "(empty)"}
+                                              </pre>
+                                            ) : null}
+                                          </div>
+                                        </details>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-white/50">No download logs found for this video</div>
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                 </div>
               ) : null}
 

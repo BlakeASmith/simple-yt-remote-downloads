@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "fs";
 
 export interface DownloadStatus {
   id: string;
@@ -161,6 +161,39 @@ class DownloadStatusTracker {
    */
   removeDownload(id: string): void {
     this.activeDownloads.delete(id);
+  }
+
+  /**
+   * Find log files that contain a specific video ID
+   * Returns array of download IDs whose logs contain the video ID
+   */
+  findLogsByVideoId(videoId: string): string[] {
+    try {
+      this.ensureLogsDir();
+      const logFiles = readdirSync(DOWNLOAD_LOGS_DIR);
+      const matchingIds: string[] = [];
+
+      for (const file of logFiles) {
+        if (!file.endsWith(".log")) continue;
+        const downloadId = file.slice(0, -4); // Remove .log extension
+        const logPath = this.logPathFor(downloadId);
+        
+        try {
+          const logContent = readFileSync(logPath, "utf-8");
+          // Check if log contains the video ID (format: [videoId] or just videoId)
+          if (logContent.includes(`[${videoId}]`) || logContent.includes(videoId)) {
+            matchingIds.push(downloadId);
+          }
+        } catch {
+          // Skip files that can't be read
+          continue;
+        }
+      }
+
+      return matchingIds;
+    } catch {
+      return [];
+    }
   }
 }
 

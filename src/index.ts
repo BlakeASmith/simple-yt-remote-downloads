@@ -489,6 +489,19 @@ const server = serve({
       return response;
     }
 
+    // Find logs by video ID: GET /api/downloads/logs/by-video/:videoId
+    const logsByVideoMatch = pathname.match(/^\/api\/downloads\/logs\/by-video\/([^\/]+)$/);
+    if (logsByVideoMatch && req.method === "GET") {
+      const videoId = logsByVideoMatch[1];
+      const statusTracker = getDownloadStatusTracker();
+      const matchingIds = statusTracker.findLogsByVideoId(videoId);
+      const response = Response.json({ success: true, downloadIds: matchingIds });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
     // Collections API routes
     if (pathname === "/api/collections" && req.method === "GET") {
       const collectionsManager = getCollectionsManager();
