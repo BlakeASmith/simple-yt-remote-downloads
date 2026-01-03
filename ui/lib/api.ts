@@ -68,8 +68,19 @@ export interface DownloadStatus {
   completedAt?: number;
   error?: string;
   outputPath: string;
+  currentFile?: string;
+  currentPath?: string;
+  finalFile?: string;
+  finalPath?: string;
+  logAvailable?: boolean;
   format: "video" | "audio";
   resolution?: "1080" | "720";
+}
+
+export interface DownloadLogResponse {
+  success: boolean;
+  log?: string;
+  message?: string;
 }
 
 export interface TrackerStats {

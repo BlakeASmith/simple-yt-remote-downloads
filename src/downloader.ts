@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, statSync } from "fs";
-import { join, relative } from "path";
+import { basename, join, relative } from "path";
 import { getTracker } from "./tracker";
 import { getDownloadStatusTracker } from "./download-status";
 import { getCollectionsManager } from "./collections";
@@ -700,6 +700,9 @@ export function startDownload(options: DownloadOptions): DownloadResult {
       const line = raw.trim();
       if (!line) return;
 
+      // Persist full yt-dlp output for UI debugging.
+      statusTracker.appendLog(downloadId, raw);
+
       // Keep a short tail of stderr-ish lines for debugging on failure.
       if (line.toLowerCase().includes("error") || line.toLowerCase().includes("traceback")) {
         recentErrors.push(line);
@@ -711,6 +714,10 @@ export function startDownload(options: DownloadOptions): DownloadResult {
       const destMatch = line.match(/Destination:\s+(.*)$/);
       if (destMatch?.[1]) {
         currentDestination = destMatch[1].replace(/^"+|"+$/g, "");
+        statusTracker.updateStatus(downloadId, {
+          currentPath: currentDestination,
+          currentFile: basename(currentDestination),
+        });
         return;
       }
 
@@ -720,6 +727,10 @@ export function startDownload(options: DownloadOptions): DownloadResult {
       if (mergeMatch?.[1]) {
         finalOutputFile = mergeMatch[1];
         statusTracker.updateStatus(downloadId, { status: "processing" });
+        statusTracker.updateStatus(downloadId, {
+          finalPath: finalOutputFile,
+          finalFile: basename(finalOutputFile),
+        });
         return;
       }
 
@@ -729,6 +740,10 @@ export function startDownload(options: DownloadOptions): DownloadResult {
       if (extractMatch?.[1]) {
         finalOutputFile = extractMatch[1].replace(/^"+|"+$/g, "");
         statusTracker.updateStatus(downloadId, { status: "processing" });
+        statusTracker.updateStatus(downloadId, {
+          finalPath: finalOutputFile,
+          finalFile: basename(finalOutputFile),
+        });
         return;
       }
 

@@ -6,6 +6,7 @@ import {
   normalizeScheduleUpdates,
   type Collection,
   type DownloadRequest,
+  type DownloadLogResponse,
   type DownloadStatus,
   type Schedule,
   type TrackerStats,
@@ -765,6 +766,25 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
   const [channels, setChannels] = useState<TrackedChannel[]>([]);
   const [playlists, setPlaylists] = useState<TrackedPlaylist[]>([]);
   const [q, setQ] = useState("");
+  const [logsById, setLogsById] = useState<Record<string, { loading: boolean; log?: string; error?: string }>>({});
+
+  async function ensureLogs(id: string) {
+    setLogsById((prev) => {
+      const cur = prev[id];
+      if (cur?.loading || typeof cur?.log === "string" || typeof cur?.error === "string") return prev;
+      return { ...prev, [id]: { loading: true } };
+    });
+
+    const res = await apiGet<DownloadLogResponse>(`/api/downloads/logs/${id}`);
+    if (res.ok && res.data.success) {
+      setLogsById((prev) => ({ ...prev, [id]: { loading: false, log: res.data.log || "" } }));
+      return;
+    }
+    setLogsById((prev) => ({
+      ...prev,
+      [id]: { loading: false, error: res.ok ? res.data.message || "Failed to load logs" : res.message },
+    }));
+  }
 
   async function loadAll() {
     const res = await apiGet<{
@@ -839,7 +859,16 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                       {d.status}
                     </Badge>
                   </div>
-                  <div className="mt-1 truncate text-xs text-white/55">{d.channel ? `Channel: ${d.channel}` : d.url}</div>
+                  <div className="mt-1 grid gap-1 text-xs text-white/55">
+                    <div className="truncate">{d.channel ? `Channel: ${d.channel}` : d.url}</div>
+                    <div className="truncate">Output: {d.outputPath}</div>
+                    {d.finalFile || d.currentFile ? (
+                      <div className="truncate">
+                        File: {d.finalFile || d.currentFile}
+                        {d.finalPath || d.currentPath ? ` (${d.finalPath || d.currentPath})` : ""}
+                      </div>
+                    ) : null}
+                  </div>
                   {typeof d.progress === "number" ? (
                     <div className="mt-2">
                       <div className="h-2 overflow-hidden rounded bg-white/5 ring-1 ring-white/10">
@@ -848,6 +877,27 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                       <div className="mt-1 text-xs text-white/55">{d.progress}%</div>
                     </div>
                   ) : null}
+
+                  <details
+                    className="mt-3 rounded-lg bg-black/20 ring-1 ring-white/10"
+                    onToggle={(e) => {
+                      const el = e.currentTarget;
+                      if (el.open) void ensureLogs(d.id);
+                    }}
+                  >
+                    <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-white/70 hover:text-white">
+                      yt-dlp logs
+                    </summary>
+                    <div className="px-3 pb-3">
+                      {logsById[d.id]?.loading ? <div className="text-xs text-white/60">Loading…</div> : null}
+                      {logsById[d.id]?.error ? <div className="text-xs text-red-200">{logsById[d.id]?.error}</div> : null}
+                      {typeof logsById[d.id]?.log === "string" ? (
+                        <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] leading-relaxed text-white/80 ring-1 ring-white/10">
+                          {logsById[d.id]?.log || "(empty)"}
+                        </pre>
+                      ) : null}
+                    </div>
+                  </details>
                 </div>
               ))}
             </div>
@@ -900,6 +950,9 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                             </div>
                             <div className="mt-1 text-xs text-white/55">
                               {v.channel} · {v.relativePath}
+                            </div>
+                            <div className="mt-1 text-xs text-white/55">
+                              File: {v.fullPath ? v.fullPath.split("/").pop() : "unknown"} · <span className="break-all">{v.fullPath}</span>
                             </div>
                             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
                               <span>Size: {formatBytes(v.fileSize)}</span>
