@@ -6,7 +6,9 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "bun run build:ui && bun run --watch src/index.ts",
-    "build:ui": "mkdir -p public/assets && bunx @tailwindcss/cli -i ui/styles.css -o public/assets/app.css --minify && bun build ui/main.tsx --outfile public/assets/app.js --minify --target=browser --format=esm",
+    "build:css": "mkdir -p public/assets && bunx tailwindcss -i ui/styles.css -o public/assets/app.css --minify",
+    "build:js": "bun build ui/main.tsx --outfile public/assets/app.js --minify --target=browser --format=esm",
+    "build:ui": "bun run build:css && bun run build:js",
     "build:server": "bun build src/index.ts --compile --outfile youtube-dl-server",
     "build": "bun run build:ui && bun run build:server",
     "start": "bun run build:ui && bun run src/index.ts"

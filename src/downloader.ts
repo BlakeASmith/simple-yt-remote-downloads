@@ -847,7 +847,7 @@ async function processDownloadedVideo(
 /**
  * Start a download in the background and track it
  */
-export function startDownload(options: DownloadOptions): DownloadResult {
+export async function startDownload(options: DownloadOptions): Promise<DownloadResult> {
   console.log(`[${new Date().toISOString()}] startDownload called with outputPath: "${options.outputPath}"`);
   
   // Ensure output directory exists

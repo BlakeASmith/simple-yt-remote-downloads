@@ -152,7 +152,7 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       );
     }
 
-    const result = startDownload({
+    const result = await startDownload({
       url: body.url,
       outputPath,
       audioOnly: body.audioOnly || false,
@@ -989,7 +989,7 @@ const server = serve({
         for (const videoId of testVideos) {
           const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
           try {
-            const result = startDownload({
+            const result = await startDownload({
               url: videoUrl,
               outputPath: testCollectionRootPath,
               audioOnly: false,
