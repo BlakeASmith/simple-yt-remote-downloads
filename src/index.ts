@@ -460,6 +460,80 @@ const server = serve({
       return response;
     }
 
+    // Delete channel: DELETE /api/tracker/channels/:id
+    const channelDeleteMatch = pathname.match(/^\/api\/tracker\/channels\/([^\/]+)$/);
+    if (channelDeleteMatch && req.method === "DELETE") {
+      try {
+        const channelId = channelDeleteMatch[1];
+        const tracker = getTracker();
+        const deleted = tracker.deleteChannel(channelId);
+
+        if (!deleted) {
+          const response = Response.json(
+            { success: false, message: "Channel not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const response = Response.json({ success: true, message: "Channel and all videos deleted" });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err: any) {
+        console.error("Error deleting channel:", err);
+        const response = Response.json(
+          { success: false, message: err?.message || "Failed to delete channel" },
+          { status: 500 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
+    // Delete playlist: DELETE /api/tracker/playlists/:id
+    const playlistDeleteMatch = pathname.match(/^\/api\/tracker\/playlists\/([^\/]+)$/);
+    if (playlistDeleteMatch && req.method === "DELETE") {
+      try {
+        const playlistId = playlistDeleteMatch[1];
+        const tracker = getTracker();
+        const deleted = tracker.deletePlaylist(playlistId);
+
+        if (!deleted) {
+          const response = Response.json(
+            { success: false, message: "Playlist not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const response = Response.json({ success: true, message: "Playlist and all videos deleted" });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err: any) {
+        console.error("Error deleting playlist:", err);
+        const response = Response.json(
+          { success: false, message: err?.message || "Failed to delete playlist" },
+          { status: 500 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
     // Download status API route
     if (pathname === "/api/downloads/status" && req.method === "GET") {
       const statusTracker = getDownloadStatusTracker();
@@ -661,26 +735,58 @@ const server = serve({
     // Delete collection: DELETE /api/collections/:id
     const collectionDeleteMatch = pathname.match(/^\/api\/collections\/([^\/]+)$/);
     if (collectionDeleteMatch && req.method === "DELETE") {
-      const collectionId = collectionDeleteMatch[1];
-      const collectionsManager = getCollectionsManager();
-      const deleted = collectionsManager.deleteCollection(collectionId);
+      try {
+        const collectionId = collectionDeleteMatch[1];
+        const collectionsManager = getCollectionsManager();
+        const tracker = getTracker();
+        const collection = collectionsManager.getCollection(collectionId);
+        
+        if (!collection) {
+          const response = Response.json(
+            { success: false, message: "Collection not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
 
-      if (!deleted) {
+        // Delete all videos in the collection
+        const videoResult = tracker.deleteVideosByCollectionPath(collection.rootPath);
+        
+        // Delete collection directory and all contents
+        try {
+          if (existsSync(collection.rootPath)) {
+            rmSync(collection.rootPath, { recursive: true, force: true });
+          }
+        } catch (error) {
+          console.error("Error deleting collection directory:", error);
+        }
+
+        // Delete collection entry
+        const deleted = collectionsManager.deleteCollection(collectionId, () => videoResult);
+
+        const response = Response.json({ 
+          success: true, 
+          message: `Collection deleted: ${videoResult.deletedVideos} videos removed`,
+          deletedVideos: videoResult.deletedVideos
+        });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err: any) {
+        console.error("Error deleting collection:", err);
         const response = Response.json(
-          { success: false, message: "Collection not found" },
-          { status: 404 }
+          { success: false, message: err?.message || "Failed to delete collection" },
+          { status: 500 }
         );
         Object.entries(corsHeaders).forEach(([key, value]) => {
           response.headers.set(key, value);
         });
         return response;
       }
-
-      const response = Response.json({ success: true, message: "Collection deleted" });
-      Object.entries(corsHeaders).forEach(([key, value]) => {
-        response.headers.set(key, value);
-      });
-      return response;
     }
 
     // Developer test API routes

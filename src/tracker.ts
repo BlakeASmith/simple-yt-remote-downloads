@@ -629,6 +629,99 @@ class Tracker {
   }
 
   /**
+   * Delete a channel and all its videos with associated files
+   */
+  deleteChannel(channelId: string): boolean {
+    // Check if channel exists
+    const getChannelByIdStmt = this.db.prepare(`SELECT * FROM channels WHERE id = ?`);
+    const channelData = getChannelByIdStmt.get(channelId) as any;
+    
+    if (!channelData) {
+      return false;
+    }
+
+    // Get all videos associated with this channel
+    const channelVideos = this.getChannelVideosStmt.all(channelId) as Array<{ videoId: string; videoRelativePath: string }>;
+    
+    let deletedVideos = 0;
+    
+    // Delete each video (which will delete files and database entries)
+    for (const { videoId, videoRelativePath } of channelVideos) {
+      if (this.deleteVideo(videoId, videoRelativePath)) {
+        deletedVideos++;
+      }
+    }
+
+    // Delete channel entry (cascades to channel_videos via foreign key)
+    const deleteChannelStmt = this.db.prepare(`
+      DELETE FROM channels WHERE id = ?
+    `);
+    const result = deleteChannelStmt.run(channelId);
+    
+    console.log(`[${new Date().toISOString()}] Deleted channel ${channelId}: ${deletedVideos} videos removed`);
+    
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete a playlist and all its videos with associated files
+   */
+  deletePlaylist(playlistId: string): boolean {
+    // Check if playlist exists
+    const getPlaylistByIdStmt = this.db.prepare(`SELECT * FROM playlists WHERE id = ?`);
+    const playlistData = getPlaylistByIdStmt.get(playlistId) as any;
+    
+    if (!playlistData) {
+      return false;
+    }
+
+    // Get all videos associated with this playlist
+    const playlistVideos = this.getPlaylistVideosStmt.all(playlistId) as Array<{ videoId: string; videoRelativePath: string }>;
+    
+    let deletedVideos = 0;
+    
+    // Delete each video (which will delete files and database entries)
+    for (const { videoId, videoRelativePath } of playlistVideos) {
+      if (this.deleteVideo(videoId, videoRelativePath)) {
+        deletedVideos++;
+      }
+    }
+
+    // Delete playlist entry (cascades to playlist_videos via foreign key)
+    const deletePlaylistStmt = this.db.prepare(`
+      DELETE FROM playlists WHERE id = ?
+    `);
+    const result = deletePlaylistStmt.run(playlistId);
+    
+    console.log(`[${new Date().toISOString()}] Deleted playlist ${playlistId}: ${deletedVideos} videos removed`);
+    
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete all videos within a collection path and their files
+   */
+  deleteVideosByCollectionPath(collectionRootPath: string): { deletedVideos: number; deletedFiles: number } {
+    // Get all videos and filter by those whose fullPath starts with collectionRootPath
+    const allVideos = this.getAllVideos();
+    const collectionVideos = allVideos.filter(v => v.fullPath.startsWith(collectionRootPath));
+    
+    let deletedVideos = 0;
+    
+    // Delete each video (which will delete files and database entries)
+    for (const video of collectionVideos) {
+      if (this.deleteVideo(video.id, video.relativePath)) {
+        deletedVideos++;
+      }
+    }
+    
+    console.log(`[${new Date().toISOString()}] Deleted ${deletedVideos} videos from collection path ${collectionRootPath}`);
+    
+    // Note: deletedFiles count is not tracked here since deleteVideo handles file deletion internally
+    return { deletedVideos, deletedFiles: 0 };
+  }
+
+  /**
    * Get all tracked videos
    */
   getAllVideos(): TrackedVideo[] {

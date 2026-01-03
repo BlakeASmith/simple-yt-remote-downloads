@@ -612,10 +612,11 @@ function CollectionsModal(props: {
                     <Button
                       variant="danger"
                       onClick={async () => {
-                        if (!window.confirm(`Delete collection "${c.name}"?`)) return;
-                        const r = await apiSend<{ success: boolean; message?: string }>(`/api/collections/${c.id}`, "DELETE");
+                        if (!window.confirm(`Delete collection "${c.name}"? This will remove all videos in this collection and their files. This cannot be undone.`)) return;
+                        const r = await apiSend<{ success: boolean; message?: string; deletedVideos?: number }>(`/api/collections/${c.id}`, "DELETE");
                         if (!r.ok) return props.showToast("bad", r.message);
-                        props.showToast("good", "Collection deleted.");
+                        const videoCount = r.data.deletedVideos ?? 0;
+                        props.showToast("good", `Collection deleted. ${videoCount} videos removed.`);
                         await props.onChanged();
                       }}
                     >
@@ -1259,9 +1260,23 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                               {c.lastDownloadedAt ? <span>Last: {formatTime(c.lastDownloadedAt)}</span> : null}
                             </div>
                           </div>
-                          <a className="shrink-0 text-sm font-semibold text-sky-300 hover:text-sky-200" href={c.url} target="_blank" rel="noreferrer">
-                            Open
-                          </a>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <a className="text-sm font-semibold text-sky-300 hover:text-sky-200" href={c.url} target="_blank" rel="noreferrer">
+                              Open
+                            </a>
+                            <Button
+                              variant="danger"
+                              onClick={async () => {
+                                if (!window.confirm(`Delete channel "${c.channelName}"? This will remove all ${c.videoCount} videos and their files. This cannot be undone.`)) return;
+                                const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/channels/${c.id}`, "DELETE");
+                                if (!r.ok) return props.showToast("bad", r.message);
+                                props.showToast("good", "Channel and all videos deleted.");
+                                await loadAll();
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1288,9 +1303,23 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                               {p.lastDownloadedAt ? <span>Last: {formatTime(p.lastDownloadedAt)}</span> : null}
                             </div>
                           </div>
-                          <a className="shrink-0 text-sm font-semibold text-sky-300 hover:text-sky-200" href={p.url} target="_blank" rel="noreferrer">
-                            Open
-                          </a>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <a className="text-sm font-semibold text-sky-300 hover:text-sky-200" href={p.url} target="_blank" rel="noreferrer">
+                              Open
+                            </a>
+                            <Button
+                              variant="danger"
+                              onClick={async () => {
+                                if (!window.confirm(`Delete playlist "${p.playlistName}"? This will remove all ${p.videoCount} videos and their files. This cannot be undone.`)) return;
+                                const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/playlists/${p.id}`, "DELETE");
+                                if (!r.ok) return props.showToast("bad", r.message);
+                                props.showToast("good", "Playlist and all videos deleted.");
+                                await loadAll();
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     ))}

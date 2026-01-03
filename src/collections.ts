@@ -177,17 +177,25 @@ class CollectionsManager {
   }
 
   /**
-   * Delete a collection
+   * Delete a collection and all its videos with associated files
    */
-  deleteCollection(id: string): boolean {
+  deleteCollection(id: string, deleteVideosCallback?: (rootPath: string) => { deletedVideos: number; deletedFiles: number }): boolean {
     const existing = this.getCollection(id);
     if (!existing) {
       return false;
     }
 
+    // Delete all videos in the collection if callback provided
+    let deletedVideos = 0;
+    if (deleteVideosCallback) {
+      const result = deleteVideosCallback(existing.rootPath);
+      deletedVideos = result.deletedVideos;
+    }
+
+    // Delete collection entry
     this.deleteStmt.run(id);
     
-    console.log(`[${new Date().toISOString()}] Deleted collection: ${id}`);
+    console.log(`[${new Date().toISOString()}] Deleted collection: ${id} (${deletedVideos} videos removed)`);
     return true;
   }
 }
