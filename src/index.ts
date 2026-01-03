@@ -638,6 +638,9 @@ const server = serve({
     // Developer test API routes
     if (pathname === "/api/dev/test" && req.method === "POST") {
       try {
+        const body = await req.json();
+        const { concurrentFragments, resolution } = body;
+        
         const collectionsManager = getCollectionsManager();
         const tracker = getTracker();
         
@@ -672,13 +675,14 @@ const server = serve({
               url: videoUrl,
               outputPath: testCollectionRootPath,
               audioOnly: false,
-              resolution: "720", // Use 720p for faster downloads
+              resolution: resolution || "720", // Use provided resolution or default to 720p
               isPlaylist: false,
               isChannel: false,
               includeThumbnail: true,
               includeTranscript: false, // Skip transcript for faster downloads
               excludeShorts: false,
               useArchiveFile: false, // Allow re-downloads for testing
+              concurrentFragments: concurrentFragments || 4, // Use provided concurrent fragments or default to 4
             });
             
             downloadResults.push({
