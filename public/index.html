@@ -1447,6 +1447,8 @@
         document.getElementById('trackingPage').classList.remove('hidden');
         document.getElementById('navDownloads').classList.remove('btn-toggle');
         document.getElementById('navTracking').classList.add('btn-toggle');
+        // Initialize the tracking tab buttons
+        showTrackingTab(currentTrackingTab);
         loadTrackingData();
         loadActiveDownloads();
       }
@@ -1580,12 +1582,12 @@
 
     // Render tracking content based on current tab
     function renderTrackingContent() {
+      const content = document.getElementById('trackingContent');
+      
       if (!window.trackingData) {
-        document.getElementById('trackingContent').innerHTML = '<div style="text-align: center; color: #b4b4b4; padding: 2rem;">No data available</div>';
+        content.innerHTML = '<div style="text-align: center; color: #b4b4b4; padding: 2rem;">Loading tracked content...</div>';
         return;
       }
-
-      const content = document.getElementById('trackingContent');
       
       if (currentTrackingTab === 'videos') {
         const videos = window.trackingData.videos || [];
@@ -1669,6 +1671,9 @@
             </div>
           </div>
         `).join('');
+      } else {
+        // Fallback: if tab doesn't match, show videos tab
+        content.innerHTML = '<div style="text-align: center; color: #b4b4b4; padding: 2rem;">Loading...</div>';
       }
     }
 
