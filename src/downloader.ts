@@ -1,8 +1,10 @@
 import { spawn } from "bun";
-import { existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, statSync } from "fs";
+import { join, relative } from "path";
+import { getTracker } from "./tracker";
 
 const ARCHIVE_FILE = "/downloads/.archive";
+const DOWNLOADS_ROOT = "/downloads";
 
 export interface DownloadOptions {
   url: string;
@@ -205,6 +207,124 @@ function sanitizeFolderName(name: string): string {
 }
 
 /**
+ * Extract video ID from YouTube URL
+ */
+function extractVideoId(url: string): string | null {
+  try {
+    const urlObj = new URL(url);
+    const videoId = urlObj.searchParams.get("v") || urlObj.pathname.split("/").pop();
+    if (videoId && videoId.length === 11) {
+      return videoId;
+    }
+  } catch {
+    // Try regex fallback
+    const match = url.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract playlist ID from URL
+ */
+function extractPlaylistId(url: string): string | null {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.searchParams.get("list");
+  } catch {
+    const match = url.match(/[?&]list=([^&]+)/);
+    return match?.[1] || null;
+  }
+}
+
+/**
+ * Extract video metadata using yt-dlp JSON output
+ */
+async function extractVideoMetadata(url: string): Promise<{
+  id: string;
+  title: string;
+  channel: string;
+  channelId?: string;
+  duration?: number;
+  playlistId?: string;
+  playlistTitle?: string;
+} | null> {
+  try {
+    const proc = Bun.spawn({
+      cmd: [
+        "yt-dlp",
+        url,
+        "--dump-json",
+        "--no-warnings",
+        "--no-playlist", // Get info for single video
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      return null;
+    }
+
+    const data = JSON.parse(output.trim());
+    return {
+      id: data.id || "",
+      title: data.title || "",
+      channel: data.channel || data.uploader || "",
+      channelId: data.channel_id || data.channel_url?.split("/").pop(),
+      duration: data.duration || undefined,
+      playlistId: data.playlist_id || undefined,
+      playlistTitle: data.playlist_title || data.playlist || undefined,
+    };
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error extracting video metadata:`, error);
+    return null;
+  }
+}
+
+/**
+ * Get playlist/channel video IDs using flat playlist
+ */
+async function getPlaylistVideoIds(url: string, maxVideos?: number): Promise<string[]> {
+  try {
+    const cmd = [
+      "yt-dlp",
+      url,
+      "--flat-playlist",
+      "--print", "%(id)s",
+      "--no-warnings",
+    ];
+    
+    if (maxVideos) {
+      cmd.push("--playlist-end", maxVideos.toString());
+    }
+
+    const proc = Bun.spawn({
+      cmd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      return [];
+    }
+
+    return output.trim().split("\n").filter(id => id.trim().length === 11);
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error getting playlist video IDs:`, error);
+    return [];
+  }
+}
+
+/**
  * Build yt-dlp arguments based on download options
  */
 function buildYtDlpArgs(options: DownloadOptions): string[] {
@@ -273,7 +393,100 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
 }
 
 /**
- * Start a download in the background (fire and forget)
+ * Process downloaded video and track it
+ */
+async function processDownloadedVideo(
+  videoId: string,
+  videoUrl: string,
+  options: DownloadOptions,
+  metadata: { title: string; channel: string; channelId?: string; duration?: number; playlistId?: string; playlistTitle?: string }
+): Promise<void> {
+  const tracker = getTracker();
+  
+  // Calculate relative path safely
+  let relativePath: string;
+  try {
+    relativePath = relative(DOWNLOADS_ROOT, options.outputPath);
+    // If relative path starts with .., it's outside downloads root, use absolute path as relative
+    if (relativePath.startsWith("..")) {
+      relativePath = options.outputPath;
+    }
+  } catch {
+    relativePath = options.outputPath;
+  }
+  
+  // Find the downloaded file
+  const normalizedPath = options.outputPath.replace(/\/$/, "");
+  let filePath: string | undefined;
+  let fileSize: number | undefined;
+  
+  // Try to find the file (yt-dlp output format: "%(title)s [%(id)s].%(ext)s")
+  try {
+    // Wait a bit for file to be written, then check
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // List files in the directory and find the one matching the video ID
+    if (existsSync(normalizedPath)) {
+      const glob = new Bun.Glob(`*[${videoId}]*`);
+      for await (const file of glob.scan(normalizedPath)) {
+        const fullPath = join(normalizedPath, file);
+        if (existsSync(fullPath)) {
+          const stats = statSync(fullPath);
+          if (stats.isFile()) {
+            filePath = fullPath;
+            fileSize = stats.size;
+            break;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    // File might not exist yet or path issue
+    console.log(`[${new Date().toISOString()}] Could not find file for video ${videoId}:`, error);
+  }
+
+  // Track the video
+  tracker.trackVideo({
+    id: videoId,
+    title: metadata.title,
+    channel: metadata.channel,
+    channelId: metadata.channelId,
+    url: videoUrl,
+    relativePath,
+    fullPath: filePath || join(normalizedPath, `${metadata.title} [${videoId}]`),
+    format: options.audioOnly ? "audio" : "video",
+    resolution: options.audioOnly ? undefined : options.resolution,
+    fileSize,
+    duration: metadata.duration,
+  });
+
+  // Track channel if applicable
+  if (options.isChannel || metadata.channel) {
+    tracker.trackChannel({
+      channelName: metadata.channel,
+      channelId: metadata.channelId,
+      url: options.url,
+      relativePath,
+      videoId,
+      maxVideos: options.maxVideos,
+    });
+  }
+
+  // Track playlist if applicable
+  if (options.isPlaylist || metadata.playlistId) {
+    const playlistName = metadata.playlistTitle || `playlist-${metadata.playlistId}`;
+    tracker.trackPlaylist({
+      playlistName,
+      playlistId: metadata.playlistId,
+      url: options.url,
+      relativePath,
+      videoId,
+    });
+  }
+}
+
+/**
+ * Start a download in the background and track it
  */
 export function startDownload(options: DownloadOptions): DownloadResult {
   console.log(`[${new Date().toISOString()}] startDownload called with outputPath: "${options.outputPath}"`);
@@ -288,7 +501,51 @@ export function startDownload(options: DownloadOptions): DownloadResult {
   console.log(`[${new Date().toISOString()}] Starting download: ${options.url}`);
   console.log(`[${new Date().toISOString()}] Command: yt-dlp ${args.join(" ")}`);
 
-  // Fire and forget - spawn process without awaiting
+  // Track downloads asynchronously
+  (async () => {
+    try {
+      if (options.isPlaylist || options.isChannel) {
+        // For playlists/channels, get video IDs first, then track each
+        const videoIds = await getPlaylistVideoIds(options.url, options.maxVideos);
+        console.log(`[${new Date().toISOString()}] Found ${videoIds.length} videos to track`);
+        
+        // Track each video (metadata will be fetched as download progresses)
+        for (const videoId of videoIds) {
+          const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+          extractVideoMetadata(videoUrl)
+            .then(metadata => {
+              if (metadata) {
+                // Delay tracking to allow download to complete
+                setTimeout(() => {
+                  processDownloadedVideo(metadata.id, videoUrl, options, metadata).catch(err => {
+                    console.error(`[${new Date().toISOString()}] Error tracking video ${videoId}:`, err);
+                  });
+                }, 5000); // Wait 5 seconds for download to start
+              }
+            })
+            .catch(err => {
+              console.error(`[${new Date().toISOString()}] Error extracting metadata for ${videoId}:`, err);
+            });
+        }
+      } else {
+        // For single videos, extract metadata and track immediately
+        const metadata = await extractVideoMetadata(options.url);
+        if (metadata) {
+          const videoUrl = `https://www.youtube.com/watch?v=${metadata.id}`;
+          // Delay tracking to allow download to start
+          setTimeout(() => {
+            processDownloadedVideo(metadata.id, videoUrl, options, metadata).catch(err => {
+              console.error(`[${new Date().toISOString()}] Error tracking video:`, err);
+            });
+          }, 2000);
+        }
+      }
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Error setting up tracking:`, error);
+    }
+  })();
+
+  // Spawn yt-dlp process (fire and forget)
   spawn({
     cmd: ["yt-dlp", ...args],
     stdout: "inherit",
