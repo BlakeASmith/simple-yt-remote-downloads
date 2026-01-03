@@ -119,7 +119,7 @@ function initTrackerDatabase(): Database {
       path TEXT NOT NULL,
       kind TEXT NOT NULL,
       intermediate INTEGER DEFAULT 0,
-      exists INTEGER DEFAULT 1,
+      "exists" INTEGER DEFAULT 1,
       hidden INTEGER DEFAULT 0,
       firstSeenAt INTEGER NOT NULL,
       deletedAt INTEGER,
@@ -259,7 +259,7 @@ class Tracker {
     // Prepare statements for tracked_files
     this.insertFileStmt = this.db.prepare(`
       INSERT OR REPLACE INTO tracked_files
-      (videoId, videoRelativePath, path, kind, intermediate, exists, hidden, firstSeenAt, deletedAt)
+      (videoId, videoRelativePath, path, kind, intermediate, "exists", hidden, firstSeenAt, deletedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
