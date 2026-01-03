@@ -68,6 +68,10 @@ async function checkAndTriggerSchedules() {
           payload.useArchiveFile = schedule.useArchiveFile;
         }
 
+        if (schedule.concurrentFragments !== undefined) {
+          payload.concurrentFragments = schedule.concurrentFragments;
+        }
+
         // Trigger download via API
         try {
           const response = await fetch(API_URL, {

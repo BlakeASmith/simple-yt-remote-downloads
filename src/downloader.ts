@@ -21,6 +21,7 @@ export interface DownloadOptions {
   excludeShorts?: boolean;
   collectionId?: string;
   useArchiveFile?: boolean; // If false, download without archive file (allows multiple versions)
+  concurrentFragments?: number; // Number of fragments to download in parallel (yt-dlp --concurrent-fragments)
 }
 
 export interface DownloadResult {
@@ -371,7 +372,7 @@ function getArchiveFilePath(options: DownloadOptions): string | null {
  * Build yt-dlp arguments based on download options
  */
 function buildYtDlpArgs(options: DownloadOptions): string[] {
-  const { url, outputPath, audioOnly, resolution, isPlaylist, isChannel, maxVideos, includeThumbnail, includeTranscript, excludeShorts } = options;
+  const { url, outputPath, audioOnly, resolution, isPlaylist, isChannel, maxVideos, includeThumbnail, includeTranscript, excludeShorts, concurrentFragments } = options;
 
   // Set defaults: video includes thumbnail and transcript, audio only does not
   const shouldIncludeThumbnail = includeThumbnail !== undefined 
@@ -397,6 +398,12 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
     // Make progress machine-readable (one update per line)
     "--newline",
   ];
+
+  // Add parallel chunk download support (concurrent fragments)
+  // Default to 4 fragments if not specified (reasonable balance between speed and resource usage)
+  // This enables parallel chunk downloads by default for faster downloads
+  const fragments = concurrentFragments !== undefined ? concurrentFragments : 4;
+  args.push("--concurrent-fragments", fragments.toString());
 
   // Add archive file if enabled
   const archiveFile = getArchiveFilePath(options);
@@ -578,18 +585,28 @@ async function processDownloadedVideo(
     await new Promise(resolve => setTimeout(resolve, 3000));
     
     // List files in the directory and find the one matching the video ID
+    // Skip intermediate files (fragment files, .part files) - prefer final merged files
     if (existsSync(normalizedPath)) {
       const glob = new Bun.Glob(`*[${videoId}]*`);
+      let bestFile: { path: string; size: number; isFragment: boolean } | null = null;
       for await (const file of glob.scan(normalizedPath)) {
         const fullPath = join(normalizedPath, file);
-        if (existsSync(fullPath)) {
-          const stats = statSync(fullPath);
-          if (stats.isFile()) {
-            filePath = fullPath;
-            fileSize = stats.size;
-            break;
-          }
+        if (!existsSync(fullPath)) continue;
+        const stats = statSync(fullPath);
+        if (!stats.isFile()) continue;
+        
+        // Skip intermediate files
+        if (fullPath.endsWith(".part") || fullPath.endsWith(".ytdl") || fullPath.endsWith(".temp")) continue;
+        const isFragmentFile = /\.f\d{1,4}\./i.test(fullPath);
+        
+        // Prefer non-fragment files, but keep fragment files as fallback
+        if (!bestFile || (!isFragmentFile && bestFile.isFragment)) {
+          bestFile = { path: fullPath, size: stats.size, isFragment: isFragmentFile };
         }
+      }
+      if (bestFile) {
+        filePath = bestFile.path;
+        fileSize = bestFile.size;
       }
     }
   } catch (error) {
@@ -876,20 +893,31 @@ export function startDownload(options: DownloadOptions): DownloadResult {
         }
 
         // Use filesystem as the source of truth when we can.
+        // However, with concurrent fragments, multiple fragment files are downloaded in parallel,
+        // so we should rely on yt-dlp's aggregated progress percentage rather than checking
+        // individual fragment file sizes.
         let effectivePercent = parsedPercent;
         if (currentDestination && inferredTotalBytes && inferredTotalBytes > 0) {
-          const partPath = `${currentDestination}.part`;
-          const fileToStat = existsSync(partPath) ? partPath : currentDestination;
-          try {
-            const sz = statSync(fileToStat).size;
-            const fsPercent = (sz / inferredTotalBytes) * 100;
-            // Prefer FS-derived percent if it looks sane.
-            if (Number.isFinite(fsPercent) && fsPercent >= 0 && fsPercent <= 100) {
-              effectivePercent = Math.max(effectivePercent, fsPercent);
+          // Skip filesystem check if this is a fragment file (format tag like .f137)
+          // With concurrent fragments, checking a single fragment file size would be inaccurate
+          const isFragmentFile = /\.f\d{1,4}\./i.test(currentDestination);
+          
+          if (!isFragmentFile) {
+            // Only do filesystem check for non-fragment files (final merged files or single-file downloads)
+            const partPath = `${currentDestination}.part`;
+            const fileToStat = existsSync(partPath) ? partPath : currentDestination;
+            try {
+              const sz = statSync(fileToStat).size;
+              const fsPercent = (sz / inferredTotalBytes) * 100;
+              // Prefer FS-derived percent if it looks sane.
+              if (Number.isFinite(fsPercent) && fsPercent >= 0 && fsPercent <= 100) {
+                effectivePercent = Math.max(effectivePercent, fsPercent);
+              }
+            } catch {
+              // ignore
             }
-          } catch {
-            // ignore
           }
+          // With concurrent fragments, trust yt-dlp's aggregated progress percentage
         }
 
         // Don't report "completed" just because we hit 100% download; merging may still be running.
@@ -919,9 +947,14 @@ export function startDownload(options: DownloadOptions): DownloadResult {
     // Confirm final file exists and is stable before marking completed.
     // Prefer the explicit merge/extract destination; fallback to the last destination (non-.part),
     // and finally metadata-based scan for single videos.
+    // With concurrent fragments, skip fragment files (format tags like .f137) as they're intermediate.
     let finalPath = finalOutputFile;
     if (!finalPath && currentDestination && existsSync(currentDestination) && !existsSync(`${currentDestination}.part`)) {
-      finalPath = currentDestination;
+      // Skip fragment files - they're intermediate files that get merged
+      const isFragmentFile = /\.f\d{1,4}\./i.test(currentDestination);
+      if (!isFragmentFile) {
+        finalPath = currentDestination;
+      }
     }
     if (!finalPath && singleVideoMetadata?.id) {
       try {
@@ -932,7 +965,10 @@ export function startDownload(options: DownloadOptions): DownloadResult {
           for await (const file of glob.scan(normalizedPath)) {
             const fullPath = join(normalizedPath, file);
             if (!existsSync(fullPath)) continue;
+            // Skip intermediate files: .part, .ytdl, and fragment files (format tags)
             if (fullPath.endsWith(".part") || fullPath.endsWith(".ytdl")) continue;
+            const isFragmentFile = /\.f\d{1,4}\./i.test(fullPath);
+            if (isFragmentFile) continue;
             const st = statSync(fullPath);
             if (!st.isFile()) continue;
             if (!newest || st.mtimeMs > newest.mtimeMs) newest = { path: fullPath, mtimeMs: st.mtimeMs };

@@ -21,6 +21,7 @@ export interface Schedule {
   includeTranscript?: boolean;
   excludeShorts?: boolean;
   useArchiveFile?: boolean;
+  concurrentFragments?: number;
 }
 
 /**
