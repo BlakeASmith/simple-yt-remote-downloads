@@ -741,9 +741,20 @@ const server = serve({
           const allVideos = tracker.getAllVideos();
           const testVideos = allVideos.filter(v => v.relativePath.includes(testCollectionName) || v.fullPath.startsWith(testCollectionRootPath));
           
+          // Load tracker data once before the loop
+          let trackerData = loadTrackerData();
+          if (!trackerData || !trackerData.videos) {
+            // Ensure trackerData is properly initialized
+            trackerData = {
+              videos: [],
+              channels: [],
+              playlists: [],
+              lastUpdated: Date.now(),
+            };
+          }
+          
           for (const video of testVideos) {
             // Remove from tracker data
-            const trackerData = loadTrackerData();
             const videoIndex = trackerData.videos.findIndex(
               v => v.id === video.id && (v.relativePath === video.relativePath || v.fullPath === video.fullPath)
             );
