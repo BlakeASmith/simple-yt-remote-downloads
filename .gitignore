@@ -144,6 +144,5 @@ youtube-dl-server
 # Downloads directory
 downloads/
 
-# Bun lockfile
-bun.lockb
-bun.lock
+# Generated UI build output
+public/assets/

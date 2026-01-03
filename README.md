@@ -146,7 +146,7 @@ This server provides no authentication. It is designed for local network use onl
 # Install dependencies
 bun install
 
-# Start development server
+# Build UI assets + start development server
 bun run dev
 ```
 
@@ -154,6 +154,14 @@ bun run dev
 
 ```bash
 bun run build
+```
+
+### UI Build
+
+The web UI is built with **React + Tailwind** and outputs static assets into `public/assets/`.
+
+```bash
+bun run build:ui
 ```
 
 ## Future Plans

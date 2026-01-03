@@ -1,21 +1,23 @@
-# Build stage - compile Bun app to binary
-FROM oven/bun:1.1.0-debian AS builder
+# Build stage - build UI + compile Bun app to binary
+FROM oven/bun:1.3.5-debian AS builder
 
 WORKDIR /app
 
 # Copy package files
 COPY package.json ./
 COPY tsconfig.json ./
+COPY bun.lock ./
 
-# Skip bun install - no runtime dependencies needed and bun-types is built-in
-# If needed, install can be done with: RUN bun install --no-save --frozen-lockfile
+# Install dependencies (needed for UI build)
+RUN bun install --frozen-lockfile
 
 # Copy source code
 COPY src/ ./src/
 COPY public/ ./public/
+COPY ui/ ./ui/
 
-# Build single binary
-RUN bun build src/index.ts --compile --outfile youtube-dl-server
+# Build UI assets into public/ and compile single binary
+RUN bun run build:ui && bun run build:server
 
 # Runtime stage - minimal image with yt-dlp
 FROM debian:bookworm-slim

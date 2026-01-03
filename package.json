@@ -5,12 +5,23 @@
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
-    "build": "bun build src/index.ts --compile --outfile youtube-dl-server",
-    "start": "bun run src/index.ts"
+    "dev": "bun run build:ui && bun run --watch src/index.ts",
+    "build:ui": "mkdir -p public/assets && bunx tailwindcss -i ui/styles.css -o public/assets/app.css --minify && bun build ui/main.tsx --outfile public/assets/app.js --minify --target=browser --format=esm",
+    "build:server": "bun build src/index.ts --compile --outfile youtube-dl-server",
+    "build": "bun run build:ui && bun run build:server",
+    "start": "bun run build:ui && bun run src/index.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
   "devDependencies": {
-    "@types/bun": "^1.1.0"
+    "@tailwindcss/cli": "^4.1.18",
+    "@types/bun": "^1.1.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.18"
   }
 }

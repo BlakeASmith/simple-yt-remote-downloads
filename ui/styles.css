@@ -1,0 +1,11 @@
+/* Tailwind v4 entrypoint */
+@import "tailwindcss";
+
+/* Tell Tailwind where to scan for class usage */
+@source "./**/*.{ts,tsx}";
+@source "../public/index.html";
+
+/* App baseline */
+:root {
+  color-scheme: dark;
+}
