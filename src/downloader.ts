@@ -203,14 +203,20 @@ export async function getPlaylistName(url: string): Promise<string | null> {
 
 /**
  * Sanitize a string to be safe for use as a folder name
+ * Makes folder names more readable by cleaning up formatting
  */
-function sanitizeFolderName(name: string): string {
-  // Remove or replace invalid filesystem characters
+export function sanitizeFolderName(name: string): string {
   return name
-    .replace(/[<>:"/\\|?*]/g, "") // Remove invalid chars
-    .replace(/\s+/g, " ") // Normalize whitespace
+    // Replace underscores with spaces for readability
+    .replace(/_/g, " ")
+    // Remove invalid filesystem characters
+    .replace(/[<>:"/\\|?*]/g, "")
+    // Replace multiple spaces/hyphens with single space
+    .replace(/[\s-]+/g, " ")
+    // Trim whitespace
     .trim()
-    .substring(0, 200); // Limit length
+    // Limit length
+    .substring(0, 200);
 }
 
 /**

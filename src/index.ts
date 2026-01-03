@@ -1,5 +1,5 @@
 import { serve, file } from "bun";
-import { startDownload, getPlaylistName, getChannelName } from "./downloader";
+import { startDownload, getPlaylistName, getChannelName, sanitizeFolderName } from "./downloader";
 import { getScheduler } from "./scheduler";
 import { getTracker } from "./tracker";
 import { getCollectionsManager } from "./collections";
@@ -41,13 +41,20 @@ async function resolveChannelPath(url: string): Promise<string> {
     // Fall through to fallback
   }
   
-  // Fallback: extract identifier from URL
+  // Fallback: extract identifier from URL and format it nicely
   const channelIdMatch = url.match(/(?:channel\/|@)([^\/\?]+)/);
   if (channelIdMatch?.[1]) {
-    return `channel-${channelIdMatch[1]}`;
+    const identifier = channelIdMatch[1];
+    // If it's a channel ID (starts with UC), format as "Channel-UCxxxxx"
+    if (identifier.startsWith('UC') && identifier.length === 24) {
+      return sanitizeFolderName(`Channel-${identifier}`);
+    }
+    // If it's a handle (starts with @ or is a handle), format as "Channel-handlename"
+    const handle = identifier.replace(/^@/, ''); // Remove @ if present
+    return sanitizeFolderName(`Channel-${handle}`);
   }
   
-  return `channel-${Date.now()}`;
+  return sanitizeFolderName(`Channel-Unknown-${Date.now()}`);
 }
 
 /**
@@ -69,9 +76,9 @@ async function resolvePlaylistPath(url: string): Promise<string> {
       new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 3000))
     ]);
     
-    return playlistName || `playlist-${playlistId}`;
+    return playlistName || sanitizeFolderName(`Playlist-${playlistId}`);
   } catch (error) {
-    return `playlist-${playlistId}`;
+    return sanitizeFolderName(`Playlist-${playlistId}`);
   }
 }
 
