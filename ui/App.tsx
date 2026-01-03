@@ -1326,6 +1326,8 @@ function Stat(props: { label: string; value: React.ReactNode }) {
 function DeveloperPage(props: { showToast: (tone: "good" | "bad", message: string) => void }) {
   const [testRunning, setTestRunning] = useState(false);
   const [cleanupRunning, setCleanupRunning] = useState(false);
+  const [concurrentFragments, setConcurrentFragments] = useState<number>(4);
+  const [resolution, setResolution] = useState<"1080" | "720">("720");
   const [testResult, setTestResult] = useState<{
     collection?: Collection;
     downloads?: Array<{ videoId: string; url: string; success: boolean; message?: string }>;
@@ -1347,7 +1349,10 @@ function DeveloperPage(props: { showToast: (tone: "good" | "bad", message: strin
         collection?: Collection;
         downloads?: Array<{ videoId: string; url: string; success: boolean; message?: string }>;
         message?: string;
-      }>("/api/dev/test", "POST");
+      }>("/api/dev/test", "POST", {
+        concurrentFragments,
+        resolution,
+      });
       
       if (res.ok && res.data.success) {
         setTestResult(res.data);
@@ -1404,6 +1409,33 @@ function DeveloperPage(props: { showToast: (tone: "good" | "bad", message: strin
             <div className="text-sm font-semibold text-white/85">Test Functionality</div>
             <div className="mt-1 text-xs text-white/55">
               Creates a test collection and downloads a few short videos to verify the main functionality works correctly.
+            </div>
+          </div>
+
+          <div className="grid gap-3 rounded-xl bg-white/3 p-4 ring-1 ring-white/8 md:grid-cols-2">
+            <div className="grid gap-2">
+              <div className="text-xs font-semibold text-white/70">Quality Settings</div>
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-sm text-white/75">
+                  <Radio checked={resolution === "1080"} onChange={() => setResolution("1080")} />
+                  1080p
+                </label>
+                <label className="flex items-center gap-2 text-sm text-white/75">
+                  <Radio checked={resolution === "720"} onChange={() => setResolution("720")} />
+                  720p
+                </label>
+              </div>
+            </div>
+            <div className="grid gap-2">
+              <div className="text-xs font-semibold text-white/70">Concurrent fragments</div>
+              <Input
+                type="number"
+                min={1}
+                max={16}
+                value={String(concurrentFragments)}
+                onChange={(e) => setConcurrentFragments(Math.max(1, Math.min(16, parseInt(e.target.value || "4", 10))))}
+              />
+              <div className="text-xs text-white/55">Number of fragments to download in parallel (1-16, default: 4)</div>
             </div>
           </div>
 
