@@ -81,17 +81,44 @@ function buildChannelUrl(input: string): string {
 }
 
 /**
+ * Check if URL is a video URL (not a channel or playlist URL)
+ */
+function isVideoUrl(url: string): boolean {
+  try {
+    const urlObj = new URL(url);
+    const pathname = urlObj.pathname;
+    // Video URLs contain /watch, /live, /shorts, or /embed
+    return /^\/(watch|live|shorts|embed)\//.test(pathname) || 
+           pathname === '/watch' || 
+           pathname.startsWith('/live/') ||
+           pathname.startsWith('/shorts/');
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get channel name from URL or channel ID using yt-dlp
+ * Works with both channel URLs and video URLs
  */
 export async function getChannelName(channelInput: string): Promise<string | null> {
   try {
     console.log(`[${new Date().toISOString()}] Attempting to get channel name from: ${channelInput}`);
     
     const channelUrl = buildChannelUrl(channelInput);
+    const isVideo = isVideoUrl(channelUrl);
+    
+    // Build yt-dlp command - use --no-playlist for videos, --flat-playlist for channels
+    const cmd = ["yt-dlp", channelUrl, "--print", "%(channel)s", "--no-warnings"];
+    if (isVideo) {
+      cmd.push("--no-playlist");
+    } else {
+      cmd.push("--flat-playlist", "--playlist-end", "1");
+    }
     
     // Use yt-dlp to extract channel name
     const proc = Bun.spawn({
-      cmd: ["yt-dlp", channelUrl, "--print", "%(channel)s", "--flat-playlist", "--no-warnings", "--playlist-end", "1"],
+      cmd,
       stdout: "pipe",
       stderr: "pipe",
     });

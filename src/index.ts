@@ -100,6 +100,9 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
             { status: 400 }
           );
         }
+      } else {
+        // For single videos, group by channel name
+        relativePath = await resolveChannelPath(body.url);
       }
     }
 
@@ -236,7 +239,8 @@ const server = serve({
               return response;
             }
           } else {
-            relativePath = `schedule-${Date.now()}`;
+            // For single videos, group by channel name
+            relativePath = await resolveChannelPath(url);
           }
         }
 
