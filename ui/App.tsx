@@ -303,16 +303,6 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
 
   return (
     <div className="grid gap-6">
-      <SectionHeader
-        title="Queue a download"
-        subtitle="Paste a URL (video / playlist / channel). Defaults are optimized for speed."
-        right={
-          <Button variant="ghost" onClick={() => setCollectionsOpen(true)}>
-            Manage collections
-          </Button>
-        }
-      />
-
       <Card>
         <div className="grid gap-4">
           <div className="grid gap-2">
