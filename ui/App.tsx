@@ -187,6 +187,7 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
   const [includeTranscript, setIncludeTranscript] = useState(true);
   const [excludeShorts, setExcludeShorts] = useState(true);
   const [useArchiveFile, setUseArchiveFile] = useState(true);
+  const [concurrentFragments, setConcurrentFragments] = useState<number>(4);
 
   const [createSchedule, setCreateSchedule] = useState(false);
   const [intervalValue, setIntervalValue] = useState<number>(1);
@@ -259,6 +260,7 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
       includeTranscript,
       excludeShorts,
       useArchiveFile,
+      concurrentFragments,
     };
 
     const scheduleMinutes = createSchedule ? toMinutes(intervalValue, intervalUnit) : undefined;
@@ -406,6 +408,17 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
                 <Checkbox checked={useArchiveFile} onChange={(e) => setUseArchiveFile(e.target.checked)} />
                 Prevent duplicates (archive)
               </label>
+              <div className="mt-2 grid gap-2">
+                <div className="text-xs font-semibold text-white/70">Concurrent fragments</div>
+                <Input
+                  type="number"
+                  min={1}
+                  max={16}
+                  value={String(concurrentFragments)}
+                  onChange={(e) => setConcurrentFragments(Math.max(1, Math.min(16, parseInt(e.target.value || "4", 10))))}
+                />
+                <div className="text-xs text-white/55">Number of fragments to download in parallel (1-16, default: 4)</div>
+              </div>
             </div>
           </div>
 
@@ -687,6 +700,7 @@ function EditScheduleModal(props: {
   const [includeTranscript, setIncludeTranscript] = useState(true);
   const [excludeShorts, setExcludeShorts] = useState(true);
   const [useArchiveFile, setUseArchiveFile] = useState(true);
+  const [concurrentFragments, setConcurrentFragments] = useState<number>(4);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -708,6 +722,7 @@ function EditScheduleModal(props: {
     setIncludeTranscript(s.includeTranscript ?? !s.audioOnly);
     setExcludeShorts(s.excludeShorts ?? true);
     setUseArchiveFile(s.useArchiveFile ?? true);
+    setConcurrentFragments(s.concurrentFragments ?? 4);
   }, [s]);
 
   return (
@@ -800,6 +815,17 @@ function EditScheduleModal(props: {
                 <Checkbox checked={useArchiveFile} onChange={(e) => setUseArchiveFile(e.target.checked)} />
                 Prevent duplicates (archive)
               </label>
+              <div className="mt-2 grid gap-2">
+                <div className="text-xs font-semibold text-white/70">Concurrent fragments</div>
+                <Input
+                  type="number"
+                  min={1}
+                  max={16}
+                  value={String(concurrentFragments)}
+                  onChange={(e) => setConcurrentFragments(Math.max(1, Math.min(16, parseInt(e.target.value || "4", 10))))}
+                />
+                <div className="text-xs text-white/55">Number of fragments to download in parallel (1-16, default: 4)</div>
+              </div>
             </div>
           </div>
 
@@ -822,6 +848,7 @@ function EditScheduleModal(props: {
                     includeTranscript,
                     excludeShorts,
                     useArchiveFile,
+                    concurrentFragments,
                     // Send empty string to intentionally clear.
                     collectionId,
                   };
