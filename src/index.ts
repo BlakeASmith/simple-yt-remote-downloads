@@ -1,5 +1,6 @@
 import { serve, file } from "bun";
 import { startDownload, getPlaylistName, getChannelName } from "./downloader";
+import { getScheduler } from "./scheduler";
 import { join } from "path";
 
 const DOWNLOADS_ROOT = "/downloads";
@@ -170,7 +171,7 @@ const server = serve({
     // CORS headers for all responses
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
 
@@ -183,6 +184,150 @@ const server = serve({
     if (pathname === "/api/download" && req.method === "POST") {
       const response = await handleDownloadRequest(req);
       // Add CORS headers to response
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    // Schedule management routes
+    if (pathname === "/api/schedules" && req.method === "GET") {
+      const scheduler = getScheduler();
+      const schedules = scheduler.getAllSchedules();
+      const response = Response.json({ success: true, schedules });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    if (pathname === "/api/schedules" && req.method === "POST") {
+      try {
+        const body = await req.json();
+        const { url, path, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes } = body;
+
+        if (!url || !intervalMinutes || intervalMinutes < 1) {
+          const response = Response.json(
+            { success: false, message: "Missing required fields: url and intervalMinutes (must be >= 1)" },
+            { status: 400 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        // Resolve path if not provided
+        let relativePath = path || "";
+        if (!relativePath) {
+          if (isChannel) {
+            relativePath = await resolveChannelPath(url);
+          } else if (isPlaylistUrl(url, isPlaylist || false)) {
+            try {
+              relativePath = await resolvePlaylistPath(url);
+            } catch (error) {
+              const response = Response.json(
+                { success: false, message: "Could not determine playlist ID. Please specify a folder name." },
+                { status: 400 }
+              );
+              Object.entries(corsHeaders).forEach(([key, value]) => {
+                response.headers.set(key, value);
+              });
+              return response;
+            }
+          } else {
+            relativePath = `schedule-${Date.now()}`;
+          }
+        }
+
+        const scheduler = getScheduler();
+        const schedule = scheduler.createSchedule({
+          url,
+          path: relativePath,
+          audioOnly: audioOnly || false,
+          resolution: resolution || "1080",
+          isPlaylist: isPlaylist || false,
+          isChannel: isChannel || false,
+          maxVideos,
+          intervalMinutes,
+          enabled: true,
+        });
+
+        const response = Response.json({ success: true, schedule });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err) {
+        console.error("Error creating schedule:", err);
+        const response = Response.json(
+          { success: false, message: "Invalid request body" },
+          { status: 400 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
+    // Update schedule: PUT /api/schedules/:id
+    const scheduleUpdateMatch = pathname.match(/^\/api\/schedules\/([^\/]+)$/);
+    if (scheduleUpdateMatch && req.method === "PUT") {
+      try {
+        const scheduleId = scheduleUpdateMatch[1];
+        const body = await req.json();
+        const scheduler = getScheduler();
+        const updated = scheduler.updateSchedule(scheduleId, body);
+
+        if (!updated) {
+          const response = Response.json(
+            { success: false, message: "Schedule not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const response = Response.json({ success: true, schedule: updated });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err) {
+        console.error("Error updating schedule:", err);
+        const response = Response.json(
+          { success: false, message: "Invalid request body" },
+          { status: 400 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
+    // Delete schedule: DELETE /api/schedules/:id
+    const scheduleDeleteMatch = pathname.match(/^\/api\/schedules\/([^\/]+)$/);
+    if (scheduleDeleteMatch && req.method === "DELETE") {
+      const scheduleId = scheduleDeleteMatch[1];
+      const scheduler = getScheduler();
+      const deleted = scheduler.deleteSchedule(scheduleId);
+
+      if (!deleted) {
+        const response = Response.json(
+          { success: false, message: "Schedule not found" },
+          { status: 404 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+
+      const response = Response.json({ success: true, message: "Schedule deleted" });
       Object.entries(corsHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
       });
@@ -202,6 +347,9 @@ const server = serve({
     );
   },
 });
+
+// Initialize scheduler
+getScheduler();
 
 console.log(`YouTube Download Server running on port ${server.port}`);
 console.log(`Downloads root: ${DOWNLOADS_ROOT}`);
