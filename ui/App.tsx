@@ -548,6 +548,9 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
         onChanged={async () => {
           await loadCollections();
         }}
+        onCollectionsUpdate={(updater) => {
+          setCollections(updater);
+        }}
         showToast={props.showToast}
       />
 
@@ -572,6 +575,7 @@ function CollectionsModal(props: {
   collections: Collection[];
   onClose: () => void;
   onChanged: () => Promise<void>;
+  onCollectionsUpdate: (updater: (prev: Collection[]) => Collection[]) => void;
   showToast: (tone: "good" | "bad", message: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -629,6 +633,7 @@ function CollectionsModal(props: {
                         if (!r.ok) return props.showToast("bad", r.message);
                         const videoCount = r.data.deletedVideos ?? 0;
                         // Optimistically update UI immediately
+                        props.onCollectionsUpdate(prev => prev.filter(col => col.id !== c.id));
                         props.showToast("good", `Collection deleted. ${videoCount} videos removed.`);
                         // Refresh to ensure consistency
                         await props.onChanged();
