@@ -7,7 +7,7 @@ export function cx(...parts: Array<string | false | null | undefined>) {
 export function Button(props: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" | "danger" }) {
   const { className, variant = "primary", ...rest } = props;
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed";
+    "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition touch-manipulation select-none disabled:cursor-not-allowed disabled:opacity-50";
   const styles =
     variant === "primary"
       ? "bg-white/10 hover:bg-white/15 ring-1 ring-white/15"
@@ -22,7 +22,7 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       className={cx(
-        "w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/35 ring-1 ring-white/10 focus:outline-none focus:ring-2 focus:ring-sky-400/40",
+        "min-h-11 w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/35 ring-1 ring-white/10 focus:outline-none focus:ring-2 focus:ring-sky-400/40",
         className
       )}
       {...rest}
@@ -35,7 +35,7 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       className={cx(
-        "w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white ring-1 ring-white/10 focus:outline-none focus:ring-2 focus:ring-sky-400/40",
+        "min-h-11 w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white ring-1 ring-white/10 focus:outline-none focus:ring-2 focus:ring-sky-400/40",
         className
       )}
       {...rest}
@@ -47,12 +47,12 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 
 export function Checkbox(props: React.InputHTMLAttributes<HTMLInputElement>) {
   const { className, ...rest } = props;
-  return <input type="checkbox" className={cx("h-4 w-4 accent-sky-400", className)} {...rest} />;
+  return <input type="checkbox" className={cx("h-5 w-5 accent-sky-400", className)} {...rest} />;
 }
 
 export function Radio(props: React.InputHTMLAttributes<HTMLInputElement>) {
   const { className, ...rest } = props;
-  return <input type="radio" className={cx("h-4 w-4 accent-sky-400", className)} {...rest} />;
+  return <input type="radio" className={cx("h-5 w-5 accent-sky-400", className)} {...rest} />;
 }
 
 export function Card(props: React.HTMLAttributes<HTMLDivElement> & { title?: string; right?: React.ReactNode }) {
@@ -60,12 +60,12 @@ export function Card(props: React.HTMLAttributes<HTMLDivElement> & { title?: str
   return (
     <div className={cx("rounded-2xl bg-white/5 ring-1 ring-white/10 backdrop-blur", className)} {...rest}>
       {(title || right) && (
-        <div className="flex items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
+        <div className="flex flex-col gap-3 border-b border-white/10 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
           {title ? <div className="text-sm font-semibold text-white">{title}</div> : <div />}
-          {right}
+          {right ? <div className="flex w-full justify-end sm:w-auto">{right}</div> : null}
         </div>
       )}
-      <div className="px-5 py-4">{children}</div>
+      <div className="px-4 py-4 sm:px-5">{children}</div>
     </div>
   );
 }
@@ -97,15 +97,15 @@ export function Modal(props: { open: boolean; title: string; onClose: () => void
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-2xl bg-zinc-950 ring-1 ring-white/10">
-        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-5 py-4">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+1rem)] sm:items-center sm:p-6">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl overflow-hidden rounded-2xl bg-zinc-950 ring-1 ring-white/10 sm:max-h-[calc(100dvh-3rem)]">
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-4 sm:px-5">
           <div className="text-sm font-semibold text-white">{title}</div>
           <Button variant="ghost" onClick={onClose}>
             Close
           </Button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="max-h-[calc(100dvh-8rem)] overflow-y-auto px-4 py-4 sm:max-h-[calc(100dvh-10rem)] sm:px-5">{children}</div>
       </div>
     </div>
   );
@@ -120,7 +120,7 @@ export function Toast(props: { tone: "good" | "bad"; message: string; onClose: (
   return (
     <div
       className={cx(
-        "fixed bottom-4 right-4 z-50 max-w-[min(420px,calc(100vw-2rem))] rounded-xl px-4 py-3 text-sm ring-1 backdrop-blur",
+        "fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-4 right-4 z-50 rounded-xl px-4 py-3 text-sm ring-1 backdrop-blur sm:left-auto sm:right-[calc(env(safe-area-inset-right)+1rem)] sm:max-w-[min(420px,calc(100vw-2rem))]",
         tone === "good"
           ? "bg-emerald-500/15 text-emerald-100 ring-emerald-400/25"
           : "bg-red-500/15 text-red-100 ring-red-400/25"

@@ -32,12 +32,12 @@ function useInterval(fn: () => void, ms: number | null) {
 
 function SectionHeader(props: { title: string; subtitle?: string; right?: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <div className="text-lg font-semibold text-white">{props.title}</div>
         {props.subtitle ? <div className="mt-1 text-sm text-white/60">{props.subtitle}</div> : null}
       </div>
-      {props.right}
+      {props.right ? <div className="flex w-full justify-end sm:w-auto">{props.right}</div> : null}
     </div>
   );
 }
@@ -51,7 +51,7 @@ export function App() {
   return (
     <div className="min-h-dvh bg-zinc-950 text-white">
       <div className="mx-auto max-w-6xl px-4 py-5">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10">
               <span className="text-sm font-bold">YT</span>
@@ -61,11 +61,11 @@ export function App() {
               <div className="text-xs text-white/55">Fast queueing + schedules + tracking</div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant={page === "downloads" ? "primary" : "ghost"} onClick={() => setPage("downloads")}>
+          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col">
+            <Button className="w-full" variant={page === "downloads" ? "primary" : "ghost"} onClick={() => setPage("downloads")}>
               Downloads
             </Button>
-            <Button variant={page === "tracking" ? "primary" : "ghost"} onClick={() => setPage("tracking")}>
+            <Button className="w-full" variant={page === "tracking" ? "primary" : "ghost"} onClick={() => setPage("tracking")}>
               Tracking
             </Button>
           </div>
@@ -393,7 +393,7 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
               .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
               .map((s) => (
                 <div key={s.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <div className="text-sm font-semibold text-white">{s.isChannel ? "Channel" : s.isPlaylist ? "Playlist" : "Video"}</div>
@@ -409,7 +409,7 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
                         {s.lastRun ? <span>Last: {formatTime(s.lastRun)}</span> : null}
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-2">
+                    <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
                       <Button
                         variant="ghost"
                         onClick={async () => {
@@ -505,23 +505,25 @@ function CollectionsModal(props: {
               .slice()
               .sort((a, b) => a.name.localeCompare(b.name))
               .map((c) => (
-                <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl bg-white/3 px-4 py-3 ring-1 ring-white/8">
+                <div key={c.id} className="flex flex-col gap-3 rounded-xl bg-white/3 px-4 py-3 ring-1 ring-white/8 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-white">{c.name}</div>
                     <div className="truncate text-xs text-white/55">{c.rootPath}</div>
                   </div>
-                  <Button
-                    variant="danger"
-                    onClick={async () => {
-                      if (!window.confirm(`Delete collection "${c.name}"?`)) return;
-                      const r = await apiSend<{ success: boolean; message?: string }>(`/api/collections/${c.id}`, "DELETE");
-                      if (!r.ok) return props.showToast("bad", r.message);
-                      props.showToast("good", "Collection deleted.");
-                      await props.onChanged();
-                    }}
-                  >
-                    Delete
-                  </Button>
+                  <div className="flex justify-end sm:justify-start">
+                    <Button
+                      variant="danger"
+                      onClick={async () => {
+                        if (!window.confirm(`Delete collection "${c.name}"?`)) return;
+                        const r = await apiSend<{ success: boolean; message?: string }>(`/api/collections/${c.id}`, "DELETE");
+                        if (!r.ok) return props.showToast("bad", r.message);
+                        props.showToast("good", "Collection deleted.");
+                        await props.onChanged();
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </div>
                 </div>
               ))
           )}
@@ -865,14 +867,14 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
           <Card
             title="Library"
             right={
-              <div className="flex items-center gap-2">
-                <Button variant={tab === "videos" ? "primary" : "ghost"} onClick={() => setTab("videos")}>
+              <div className="grid w-full grid-cols-3 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col">
+                <Button className="w-full" variant={tab === "videos" ? "primary" : "ghost"} onClick={() => setTab("videos")}>
                   Videos
                 </Button>
-                <Button variant={tab === "channels" ? "primary" : "ghost"} onClick={() => setTab("channels")}>
+                <Button className="w-full" variant={tab === "channels" ? "primary" : "ghost"} onClick={() => setTab("channels")}>
                   Channels
                 </Button>
-                <Button variant={tab === "playlists" ? "primary" : "ghost"} onClick={() => setTab("playlists")}>
+                <Button className="w-full" variant={tab === "playlists" ? "primary" : "ghost"} onClick={() => setTab("playlists")}>
                   Playlists
                 </Button>
               </div>
@@ -889,7 +891,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     .slice(0, 200)
                     .map((v) => (
                       <div key={`${v.id}:${v.relativePath}`} className={cx("rounded-xl bg-white/3 p-4 ring-1 ring-white/8", v.deleted ? "opacity-60" : "")}>
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="truncate text-sm font-semibold">{v.title}</div>
@@ -922,7 +924,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     .slice(0, 200)
                     .map((c) => (
                       <div key={c.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="truncate text-sm font-semibold">{c.channelName}</div>
@@ -952,7 +954,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     .slice(0, 200)
                     .map((p) => (
                       <div key={p.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="truncate text-sm font-semibold">{p.playlistName}</div>
