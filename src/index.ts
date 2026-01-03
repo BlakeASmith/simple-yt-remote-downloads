@@ -1,8 +1,8 @@
 import { serve, file } from "bun";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync, rmSync } from "fs";
 import { startDownload, getPlaylistName, getChannelName, sanitizeFolderName } from "./downloader";
 import { getScheduler } from "./scheduler";
-import { getTracker } from "./tracker";
+import { getTracker, loadTrackerData, saveTrackerData } from "./tracker";
 import { getCollectionsManager } from "./collections";
 import { getDownloadStatusTracker } from "./download-status";
 import { join, resolve } from "path";
@@ -633,6 +633,182 @@ const server = serve({
         response.headers.set(key, value);
       });
       return response;
+    }
+
+    // Developer test API routes
+    if (pathname === "/api/dev/test" && req.method === "POST") {
+      try {
+        const collectionsManager = getCollectionsManager();
+        const tracker = getTracker();
+        
+        // Create test collection
+        const testCollectionName = "dev-test-collection";
+        const testCollectionRootPath = join(DOWNLOADS_ROOT, testCollectionName);
+        
+        // Check if test collection already exists
+        const existingCollections = collectionsManager.getAllCollections();
+        let testCollection = existingCollections.find(c => c.name === testCollectionName);
+        
+        if (!testCollection) {
+          testCollection = collectionsManager.createCollection({
+            name: testCollectionName,
+            rootPath: testCollectionRootPath,
+          });
+        }
+        
+        // Test videos: short, reliable YouTube videos
+        const testVideos = [
+          "jNQXAC9IVRw", // "Me at the zoo" - very short, reliable
+          "dQw4w9WgXcQ", // Rick Roll - well-known, reliable
+        ];
+        
+        const downloadResults: Array<{ videoId: string; url: string; success: boolean; message?: string }> = [];
+        
+        // Download each test video
+        for (const videoId of testVideos) {
+          const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+          try {
+            const result = startDownload({
+              url: videoUrl,
+              outputPath: testCollectionRootPath,
+              audioOnly: false,
+              resolution: "720", // Use 720p for faster downloads
+              isPlaylist: false,
+              isChannel: false,
+              includeThumbnail: true,
+              includeTranscript: false, // Skip transcript for faster downloads
+              excludeShorts: false,
+              useArchiveFile: false, // Allow re-downloads for testing
+            });
+            
+            downloadResults.push({
+              videoId,
+              url: videoUrl,
+              success: result.success,
+              message: result.message,
+            });
+          } catch (error: any) {
+            downloadResults.push({
+              videoId,
+              url: videoUrl,
+              success: false,
+              message: error?.message || "Unknown error",
+            });
+          }
+        }
+        
+        const response = Response.json({
+          success: true,
+          collection: testCollection,
+          downloads: downloadResults,
+          message: `Test collection created and ${downloadResults.filter(r => r.success).length} downloads started`,
+        });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err: any) {
+        console.error("Error running dev test:", err);
+        const response = Response.json(
+          { success: false, message: err?.message || "Failed to run test" },
+          { status: 500 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
+    if (pathname === "/api/dev/cleanup" && req.method === "POST") {
+      try {
+        const collectionsManager = getCollectionsManager();
+        const tracker = getTracker();
+        
+        const testCollectionName = "dev-test-collection";
+        const testCollectionRootPath = join(DOWNLOADS_ROOT, testCollectionName);
+        
+        // Find test collection
+        const existingCollections = collectionsManager.getAllCollections();
+        const testCollection = existingCollections.find(c => c.name === testCollectionName);
+        
+        let deletedCollection = false;
+        let deletedFiles = 0;
+        let deletedTrackedVideos = 0;
+        
+        if (testCollection) {
+          // Delete tracked videos from this collection
+          const allVideos = tracker.getAllVideos();
+          const testVideos = allVideos.filter(v => v.relativePath.includes(testCollectionName) || v.fullPath.startsWith(testCollectionRootPath));
+          
+          for (const video of testVideos) {
+            // Remove from tracker data
+            const trackerData = loadTrackerData();
+            const videoIndex = trackerData.videos.findIndex(
+              v => v.id === video.id && (v.relativePath === video.relativePath || v.fullPath === video.fullPath)
+            );
+            if (videoIndex >= 0) {
+              trackerData.videos.splice(videoIndex, 1);
+              deletedTrackedVideos++;
+            }
+            
+            // Delete associated files
+            if (video.files) {
+              for (const file of video.files) {
+                try {
+                  if (existsSync(file.path)) {
+                    rmSync(file.path, { force: true });
+                    deletedFiles++;
+                  }
+                } catch (error) {
+                  // Ignore errors deleting individual files
+                }
+              }
+            }
+          }
+          
+          // Save updated tracker data
+          if (deletedTrackedVideos > 0) {
+            saveTrackerData(trackerData);
+          }
+          
+          // Delete collection directory and all contents
+          try {
+            if (existsSync(testCollectionRootPath)) {
+              rmSync(testCollectionRootPath, { recursive: true, force: true });
+              deletedFiles += 10; // Approximate count
+            }
+          } catch (error) {
+            console.error("Error deleting collection directory:", error);
+          }
+          
+          // Delete collection from collections manager
+          collectionsManager.deleteCollection(testCollection.id);
+          deletedCollection = true;
+        }
+        
+        const response = Response.json({
+          success: true,
+          message: `Cleanup completed: ${deletedCollection ? "collection deleted" : "no collection found"}, ${deletedFiles} files removed, ${deletedTrackedVideos} tracked videos removed`,
+          deletedCollection,
+          deletedFiles,
+          deletedTrackedVideos,
+        });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err: any) {
+        console.error("Error running dev cleanup:", err);
+        const response = Response.json(
+          { success: false, message: err?.message || "Failed to cleanup" },
+          { status: 500 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
     }
 
     // Static files
