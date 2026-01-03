@@ -146,3 +146,6 @@ downloads/
 
 # Generated UI build output
 public/assets/
+
+# npm lockfile (project uses Bun)
+package-lock.json
