@@ -1,4 +1,5 @@
 import { serve, file } from "bun";
+import { mkdirSync } from "fs";
 import { startDownload, getPlaylistName, getChannelName, sanitizeFolderName } from "./downloader";
 import { getScheduler } from "./scheduler";
 import { getTracker } from "./tracker";
@@ -486,9 +487,9 @@ const server = serve({
         const body = await req.json();
         const { name, rootPath } = body;
 
-        if (!name || !rootPath) {
+        if (!name) {
           const response = Response.json(
-            { success: false, message: "Missing required fields: name and rootPath" },
+            { success: false, message: "Missing required field: name" },
             { status: 400 }
           );
           Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -498,9 +499,22 @@ const server = serve({
         }
 
         const collectionsManager = getCollectionsManager();
+        const resolvedRootPath = resolve(
+          rootPath && String(rootPath).trim()
+            ? String(rootPath).trim()
+            : join(DOWNLOADS_ROOT, sanitizeFolderName(String(name)))
+        );
+
+        // Ensure collection directory exists (best-effort)
+        try {
+          mkdirSync(resolvedRootPath, { recursive: true });
+        } catch (error) {
+          console.warn(`[${new Date().toISOString()}] Failed to create collection directory:`, error);
+        }
+
         const collection = collectionsManager.createCollection({
           name,
-          rootPath: resolve(rootPath), // Resolve to absolute path
+          rootPath: resolvedRootPath,
         });
 
         const response = Response.json({ success: true, collection });
