@@ -1026,19 +1026,19 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     .sort((a, b) => (b.downloadedAt || 0) - (a.downloadedAt || 0))
                     .slice(0, 200)
                     .map((v) => (
-                      <div key={`${v.id}:${v.relativePath}`} className={cx("rounded-xl bg-white/3 p-4 ring-1 ring-white/8", v.deleted ? "opacity-60" : "")}>
+                      <div key={`${v.id}:${v.relativePath}`} className={cx("rounded-xl bg-white/3 p-4 ring-1 ring-white/8 overflow-hidden", v.deleted ? "opacity-60" : "")}>
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="truncate text-sm font-semibold">{v.title}</div>
                               <Badge tone="muted">{v.format === "audio" ? "Audio" : `Video ${v.resolution || ""}`.trim()}</Badge>
                               {v.deleted ? <Badge tone="bad">Deleted</Badge> : null}
                             </div>
-                            <div className="mt-1 text-xs text-white/55">
+                            <div className="mt-1 truncate text-xs text-white/55">
                               {v.channel} · {v.relativePath}
                             </div>
                             <div className="mt-1 text-xs text-white/55">
-                              File: {v.fullPath ? v.fullPath.split("/").pop() : "unknown"}
+                              <span className="truncate block">File: {v.fullPath ? v.fullPath.split("/").pop() : "unknown"}</span>
                               <span className="hidden sm:inline">
                                 {" "}
                                 · <span className="break-all">{v.fullPath}</span>
@@ -1066,15 +1066,15 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     .sort((a, b) => (b.lastDownloadedAt || b.downloadedAt || 0) - (a.lastDownloadedAt || a.downloadedAt || 0))
                     .slice(0, 200)
                     .map((c) => (
-                      <div key={c.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
+                      <div key={c.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8 overflow-hidden">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="truncate text-sm font-semibold">{c.channelName}</div>
                               <Badge tone="muted">{c.videoCount} videos</Badge>
                               {c.maxVideos ? <Badge tone="muted">max {c.maxVideos}</Badge> : null}
                             </div>
-                            <div className="mt-1 text-xs text-white/55">{c.relativePath}</div>
+                            <div className="mt-1 truncate text-xs text-white/55">{c.relativePath}</div>
                             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
                               <span>First: {formatTime(c.downloadedAt)}</span>
                               {c.lastDownloadedAt ? <span>Last: {formatTime(c.lastDownloadedAt)}</span> : null}
@@ -1096,14 +1096,14 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     .sort((a, b) => (b.lastDownloadedAt || b.downloadedAt || 0) - (a.lastDownloadedAt || a.downloadedAt || 0))
                     .slice(0, 200)
                     .map((p) => (
-                      <div key={p.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
+                      <div key={p.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8 overflow-hidden">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <div className="truncate text-sm font-semibold">{p.playlistName}</div>
                               <Badge tone="muted">{p.videoCount} videos</Badge>
                             </div>
-                            <div className="mt-1 text-xs text-white/55">{p.relativePath}</div>
+                            <div className="mt-1 truncate text-xs text-white/55">{p.relativePath}</div>
                             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
                               <span>First: {formatTime(p.downloadedAt)}</span>
                               {p.lastDownloadedAt ? <span>Last: {formatTime(p.lastDownloadedAt)}</span> : null}
