@@ -20,6 +20,7 @@ export interface Schedule {
   includeThumbnail?: boolean;
   includeTranscript?: boolean;
   excludeShorts?: boolean;
+  useArchiveFile?: boolean;
 }
 
 /**
