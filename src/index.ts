@@ -1,5 +1,5 @@
 import { serve, file } from "bun";
-import { startDownload, getPlaylistName } from "./downloader";
+import { startDownload, getPlaylistName, getChannelName } from "./downloader";
 import { join } from "path";
 
 const DOWNLOADS_ROOT = "/downloads";
@@ -11,6 +11,66 @@ interface DownloadRequest {
   audioOnly?: boolean;
   resolution?: "1080" | "720";
   isPlaylist?: boolean;
+  isChannel?: boolean;
+  maxVideos?: number;
+}
+
+/**
+ * Get channel folder name with fallback
+ */
+async function resolveChannelPath(url: string): Promise<string> {
+  try {
+    const channelName = await Promise.race([
+      getChannelName(url),
+      new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 5000))
+    ]);
+    
+    if (channelName) {
+      return channelName;
+    }
+  } catch (error) {
+    // Fall through to fallback
+  }
+  
+  // Fallback: extract identifier from URL
+  const channelIdMatch = url.match(/(?:channel\/|@)([^\/\?]+)/);
+  if (channelIdMatch?.[1]) {
+    return `channel-${channelIdMatch[1]}`;
+  }
+  
+  return `channel-${Date.now()}`;
+}
+
+/**
+ * Get playlist folder name with fallback
+ */
+async function resolvePlaylistPath(url: string): Promise<string> {
+  // Extract playlist ID from URL as immediate fallback
+  const playlistIdMatch = url.match(/[?&]list=([^&]+)/);
+  if (!playlistIdMatch?.[1]) {
+    throw new Error("Could not determine playlist ID");
+  }
+  
+  const playlistId = playlistIdMatch[1];
+  
+  // Try to get the actual playlist name (async, with timeout)
+  try {
+    const playlistName = await Promise.race([
+      getPlaylistName(url),
+      new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 3000))
+    ]);
+    
+    return playlistName || `playlist-${playlistId}`;
+  } catch (error) {
+    return `playlist-${playlistId}`;
+  }
+}
+
+/**
+ * Determine if URL is a playlist
+ */
+function isPlaylistUrl(url: string, isPlaylistFlag: boolean): boolean {
+  return isPlaylistFlag || url.includes('list=') || url.includes('/playlist');
 }
 
 async function handleDownloadRequest(req: Request): Promise<Response> {
@@ -24,39 +84,21 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       );
     }
 
-    // For playlists, use playlist name as default if no path provided
+    // Resolve download path
     let relativePath = body.path || "";
     
-    // Detect playlist from URL or isPlaylist flag
-    const isPlaylistRequest = body.isPlaylist || body.url.includes('list=') || body.url.includes('/playlist');
-    
-    if (isPlaylistRequest && !relativePath) {
-      // Extract playlist ID from URL as immediate fallback
-      const playlistIdMatch = body.url.match(/[?&]list=([^&]+)/);
-      if (playlistIdMatch && playlistIdMatch[1]) {
-        relativePath = `playlist-${playlistIdMatch[1]}`;
-      } else {
-        // If we can't extract playlist ID, return error
-        return Response.json(
-          { success: false, message: "Could not determine playlist ID. Please specify a folder name." },
-          { status: 400 }
-        );
-      }
-      
-      // Try to get the actual playlist name (async, with timeout)
-      // This will override the ID if successful
-      try {
-        const playlistName = await Promise.race([
-          getPlaylistName(body.url),
-          new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 3000)) // 3 second timeout
-        ]);
-        
-        if (playlistName) {
-          relativePath = playlistName;
+    if (!relativePath) {
+      if (body.isChannel) {
+        relativePath = await resolveChannelPath(body.url);
+      } else if (isPlaylistUrl(body.url, body.isPlaylist || false)) {
+        try {
+          relativePath = await resolvePlaylistPath(body.url);
+        } catch (error) {
+          return Response.json(
+            { success: false, message: "Could not determine playlist ID. Please specify a folder name." },
+            { status: 400 }
+          );
         }
-      } catch (error) {
-        // If getting playlist name fails, use the ID fallback we already set
-        // relativePath is already set to playlist ID, so we're good
       }
     }
 
@@ -77,6 +119,8 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       audioOnly: body.audioOnly || false,
       resolution: body.resolution || "1080",
       isPlaylist: body.isPlaylist || false,
+      isChannel: body.isChannel || false,
+      maxVideos: body.maxVideos,
     });
 
     return Response.json(result, { status: 202 });
