@@ -48,6 +48,14 @@ async function checkAndTriggerSchedules() {
           payload.maxVideos = schedule.maxVideos;
         }
 
+        if (schedule.includeThumbnail !== undefined) {
+          payload.includeThumbnail = schedule.includeThumbnail;
+        }
+
+        if (schedule.includeTranscript !== undefined) {
+          payload.includeTranscript = schedule.includeTranscript;
+        }
+
         // Trigger download via API
         try {
           const response = await fetch(API_URL, {

@@ -16,6 +16,8 @@ export interface Schedule {
   nextRun: number; // timestamp
   enabled: boolean;
   createdAt: number;
+  includeThumbnail?: boolean;
+  includeTranscript?: boolean;
 }
 
 /**
