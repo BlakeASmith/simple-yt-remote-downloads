@@ -94,7 +94,6 @@ export interface TrackerStats {
   totalVideos: number;
   totalChannels: number;
   totalPlaylists: number;
-  totalSize: number;
   deletedVideos: number;
 }
 

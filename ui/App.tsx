@@ -1051,11 +1051,10 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
 
         <div className="md:col-span-3 grid gap-4">
           <Card title="Stats">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Stat label="Videos" value={stats?.totalVideos ?? 0} />
               <Stat label="Channels" value={stats?.totalChannels ?? 0} />
               <Stat label="Playlists" value={stats?.totalPlaylists ?? 0} />
-              <Stat label="Total size" value={formatBytes(stats?.totalSize)} />
             </div>
           </Card>
 

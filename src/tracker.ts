@@ -404,20 +404,15 @@ class Tracker {
     totalVideos: number;
     totalChannels: number;
     totalPlaylists: number;
-    totalSize: number;
     deletedVideos: number;
   } {
     this.data = loadTrackerData();
     const deletedVideos = this.data.videos.filter(v => v.deleted).length;
-    const totalSize = this.data.videos
-      .filter(v => !v.deleted && v.fileSize)
-      .reduce((sum, v) => sum + (v.fileSize || 0), 0);
 
     return {
       totalVideos: this.data.videos.length,
       totalChannels: this.data.channels.length,
       totalPlaylists: this.data.playlists.length,
-      totalSize,
       deletedVideos,
     };
   }
