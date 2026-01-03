@@ -6,6 +6,7 @@ export interface Schedule {
   id: string;
   url: string;
   path?: string;
+  collectionId?: string;
   audioOnly?: boolean;
   resolution?: "1080" | "720";
   isPlaylist?: boolean;

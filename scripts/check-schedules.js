@@ -44,6 +44,10 @@ async function checkAndTriggerSchedules() {
           payload.path = schedule.path;
         }
 
+        if (schedule.collectionId) {
+          payload.collectionId = schedule.collectionId;
+        }
+
         if (schedule.maxVideos) {
           payload.maxVideos = schedule.maxVideos;
         }
