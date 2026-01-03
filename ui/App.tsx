@@ -522,11 +522,16 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
                         variant="danger"
                         onClick={async () => {
                           if (!window.confirm("Delete this schedule?")) return;
-                          const r = await apiSend<{ success: boolean; message?: string }>(`/api/schedules/${s.id}`, "DELETE");
-                          if (!r.ok) return props.showToast("bad", r.message);
+                          const scheduleId = s.id;
                           // Optimistically update UI immediately
-                          setSchedules(prev => prev.filter(sched => sched.id !== s.id));
+                          setSchedules(prev => prev.filter(sched => sched.id !== scheduleId));
                           props.showToast("good", "Schedule deleted.");
+                          const r = await apiSend<{ success: boolean; message?: string }>(`/api/schedules/${scheduleId}`, "DELETE");
+                          if (!r.ok) {
+                            // Revert on error
+                            await loadSchedules();
+                            return props.showToast("bad", r.message);
+                          }
                           // Refresh to ensure consistency
                           await loadSchedules();
                         }}
@@ -547,6 +552,9 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
         onClose={() => setCollectionsOpen(false)}
         onChanged={async () => {
           await loadCollections();
+        }}
+        onCollectionsUpdate={(updater) => {
+          setCollections(updater);
         }}
         showToast={props.showToast}
       />
@@ -572,6 +580,7 @@ function CollectionsModal(props: {
   collections: Collection[];
   onClose: () => void;
   onChanged: () => Promise<void>;
+  onCollectionsUpdate: (updater: (prev: Collection[]) => Collection[]) => void;
   showToast: (tone: "good" | "bad", message: string) => void;
 }) {
   const [name, setName] = useState("");
@@ -625,11 +634,21 @@ function CollectionsModal(props: {
                       variant="danger"
                       onClick={async () => {
                         if (!window.confirm(`Delete collection "${c.name}"? This will remove all videos in this collection and their files. This cannot be undone.`)) return;
-                        const r = await apiSend<{ success: boolean; message?: string; deletedVideos?: number }>(`/api/collections/${c.id}`, "DELETE");
-                        if (!r.ok) return props.showToast("bad", r.message);
-                        const videoCount = r.data.deletedVideos ?? 0;
+                        const collectionId = c.id;
+                        const collectionName = c.name;
                         // Optimistically update UI immediately
-                        props.showToast("good", `Collection deleted. ${videoCount} videos removed.`);
+                        props.onCollectionsUpdate(prev => prev.filter(col => col.id !== collectionId));
+                        props.showToast("good", `Collection "${collectionName}" deleted.`);
+                        const r = await apiSend<{ success: boolean; message?: string; deletedVideos?: number }>(`/api/collections/${collectionId}`, "DELETE");
+                        if (!r.ok) {
+                          // Revert on error
+                          await props.onChanged();
+                          return props.showToast("bad", r.message);
+                        }
+                        const videoCount = r.data.deletedVideos ?? 0;
+                        if (videoCount > 0) {
+                          props.showToast("good", `Collection deleted. ${videoCount} videos removed.`);
+                        }
                         // Refresh to ensure consistency
                         await props.onChanged();
                       }}
@@ -1315,14 +1334,20 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                 onClick={async () => {
                                   if (!window.confirm(`Delete "${v.title}"? This will remove all associated files and cannot be undone.`)) return;
                                   const videoKey = `${v.id}:${v.relativePath}`;
-                                  const r = await apiSend<{ success: boolean; message?: string }>(
-                                    `/api/tracker/videos/${encodeURIComponent(v.id)}?relativePath=${encodeURIComponent(v.relativePath)}`,
-                                    "DELETE"
-                                  );
-                                  if (!r.ok) return props.showToast("bad", r.message);
+                                  const videoId = v.id;
+                                  const relativePath = v.relativePath;
                                   // Optimistically update UI immediately
                                   setVideos(prev => prev.filter(vid => `${vid.id}:${vid.relativePath}` !== videoKey));
                                   props.showToast("good", "Video deleted.");
+                                  const r = await apiSend<{ success: boolean; message?: string }>(
+                                    `/api/tracker/videos/${encodeURIComponent(videoId)}?relativePath=${encodeURIComponent(relativePath)}`,
+                                    "DELETE"
+                                  );
+                                  if (!r.ok) {
+                                    // Revert on error
+                                    await loadAll();
+                                    return props.showToast("bad", r.message);
+                                  }
                                   // Refresh to ensure consistency
                                   await loadAll();
                                 }}
@@ -1474,13 +1499,20 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                               variant="danger"
                               onClick={async () => {
                                 if (!window.confirm(`Delete channel "${c.channelName}"? This will remove all ${c.videoCount} videos and their files. This cannot be undone.`)) return;
-                                const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/channels/${c.id}`, "DELETE");
-                                if (!r.ok) return props.showToast("bad", r.message);
+                                const channelId = c.id;
+                                const channelName = c.channelName;
+                                const channelIdForVideos = c.channelId;
                                 // Optimistically update UI immediately
-                                setChannels(prev => prev.filter(ch => ch.id !== c.id));
+                                setChannels(prev => prev.filter(ch => ch.id !== channelId));
                                 // Also remove videos from this channel from the videos list
-                                setVideos(prev => prev.filter(v => v.channelId !== c.channelId && v.channel !== c.channelName));
+                                setVideos(prev => prev.filter(v => v.channelId !== channelIdForVideos && v.channel !== channelName));
                                 props.showToast("good", "Channel and all videos deleted.");
+                                const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/channels/${channelId}`, "DELETE");
+                                if (!r.ok) {
+                                  // Revert on error
+                                  await loadAll();
+                                  return props.showToast("bad", r.message);
+                                }
                                 // Refresh to ensure consistency
                                 await loadAll();
                               }}
@@ -1522,13 +1554,16 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                               variant="danger"
                               onClick={async () => {
                                 if (!window.confirm(`Delete playlist "${p.playlistName}"? This will remove all ${p.videoCount} videos and their files. This cannot be undone.`)) return;
-                                const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/playlists/${p.id}`, "DELETE");
-                                if (!r.ok) return props.showToast("bad", r.message);
+                                const playlistId = p.id;
                                 // Optimistically update UI immediately
-                                setPlaylists(prev => prev.filter(pl => pl.id !== p.id));
-                                // Note: We can't easily filter videos by playlist without additional data,
-                                // so we'll rely on the refresh to update the list
+                                setPlaylists(prev => prev.filter(pl => pl.id !== playlistId));
                                 props.showToast("good", "Playlist and all videos deleted.");
+                                const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/playlists/${playlistId}`, "DELETE");
+                                if (!r.ok) {
+                                  // Revert on error
+                                  await loadAll();
+                                  return props.showToast("bad", r.message);
+                                }
                                 // Refresh to ensure consistency
                                 await loadAll();
                               }}
