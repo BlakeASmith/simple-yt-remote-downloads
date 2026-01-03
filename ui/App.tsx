@@ -9,7 +9,6 @@ import {
   type DownloadLogResponse,
   type DownloadStatus,
   type Schedule,
-  type TrackerStats,
   type TrackedChannel,
   type TrackedPlaylist,
   type TrackedVideo,
@@ -873,7 +872,6 @@ function EditScheduleModal(props: {
 function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string) => void }) {
   const [tab, setTab] = useState<TrackingTab>(() => getTrackingTabFromHash() || "videos");
   const [downloads, setDownloads] = useState<DownloadStatus[]>([]);
-  const [stats, setStats] = useState<TrackerStats | null>(null);
   const [videos, setVideos] = useState<TrackedVideo[]>([]);
   const [channels, setChannels] = useState<TrackedChannel[]>([]);
   const [playlists, setPlaylists] = useState<TrackedPlaylist[]>([]);
@@ -937,14 +935,12 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
       videos: TrackedVideo[];
       channels: TrackedChannel[];
       playlists: TrackedPlaylist[];
-      stats: TrackerStats;
     }>("/api/tracker/all");
     if (!res.ok) return;
     if (res.data.success) {
       setVideos(res.data.videos || []);
       setChannels(res.data.channels || []);
       setPlaylists(res.data.playlists || []);
-      setStats(res.data.stats || null);
     }
   }
 
@@ -1050,15 +1046,6 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
         </Card>
 
         <div className="md:col-span-3 grid gap-4">
-          <Card title="Stats">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat label="Videos" value={stats?.totalVideos ?? 0} />
-              <Stat label="Channels" value={stats?.totalChannels ?? 0} />
-              <Stat label="Playlists" value={stats?.totalPlaylists ?? 0} />
-              <Stat label="Total size" value={formatBytes(stats?.totalSize)} />
-            </div>
-          </Card>
-
           <Card
             title="Library"
             right={
@@ -1310,15 +1297,6 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
           </Card>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Stat(props: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
-      <div className="text-xs font-semibold text-white/60">{props.label}</div>
-      <div className="mt-1 text-lg font-bold text-white">{props.value}</div>
     </div>
   );
 }
