@@ -19,6 +19,7 @@ interface DownloadRequest {
   maxVideos?: number;
   includeThumbnail?: boolean;
   includeTranscript?: boolean;
+  excludeShorts?: boolean;
 }
 
 /**
@@ -149,6 +150,7 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       maxVideos: body.maxVideos,
       includeThumbnail: body.includeThumbnail,
       includeTranscript: body.includeTranscript,
+      excludeShorts: body.excludeShorts,
     });
 
     return Response.json(result, { status: 202 });
@@ -231,7 +233,7 @@ const server = serve({
     if (pathname === "/api/schedules" && req.method === "POST") {
       try {
         const body = await req.json();
-        const { url, path, collectionId, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes, includeThumbnail, includeTranscript } = body;
+        const { url, path, collectionId, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes, includeThumbnail, includeTranscript, excludeShorts } = body;
 
         if (!url || !intervalMinutes || intervalMinutes < 1) {
           const response = Response.json(
@@ -298,6 +300,7 @@ const server = serve({
           enabled: true,
           includeThumbnail,
           includeTranscript,
+          excludeShorts,
         });
 
         const response = Response.json({ success: true, schedule });

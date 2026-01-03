@@ -19,6 +19,7 @@ export interface Schedule {
   createdAt: number;
   includeThumbnail?: boolean;
   includeTranscript?: boolean;
+  excludeShorts?: boolean;
 }
 
 /**
