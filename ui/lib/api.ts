@@ -165,6 +165,41 @@ export interface DownloadRequest {
   concurrentFragments?: number;
 }
 
+export interface Job {
+  id: string;
+  type: string;
+  status: "pending" | "running" | "completed" | "failed";
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+  error?: string;
+  data: Record<string, any>;
+  result?: Record<string, any>;
+}
+
+/**
+ * Poll for job completion
+ */
+export async function pollJobStatus(jobId: string, maxAttempts: number = 60, intervalMs: number = 500): Promise<ApiResult<Job>> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const result = await apiGet<{ success: boolean; job?: Job; message?: string }>(`/api/jobs/${jobId}`);
+    if (!result.ok) return result;
+    if (!result.data.success || !result.data.job) {
+      return { ok: false, message: result.data.message || "Job not found" };
+    }
+    
+    const job = result.data.job;
+    if (job.status === "completed" || job.status === "failed") {
+      return { ok: true, data: job };
+    }
+    
+    // Wait before next poll
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  
+  return { ok: false, message: "Job polling timeout" };
+}
+
 export interface ScheduleCreateRequest extends DownloadRequest {
   intervalMinutes: number;
 }

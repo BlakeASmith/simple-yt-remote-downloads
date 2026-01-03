@@ -6,6 +6,7 @@ import { getScheduler } from "./scheduler";
 import { getTracker } from "./tracker";
 import { getCollectionsManager } from "./collections";
 import { getDownloadStatusTracker } from "./download-status";
+import { getJobQueue } from "./job-queue";
 import { join, resolve } from "path";
 
 const DOWNLOADS_ROOT = "/downloads";
@@ -466,29 +467,22 @@ const server = serve({
     if (channelDeleteMatch && req.method === "DELETE") {
       try {
         const channelId = channelDeleteMatch[1];
-        const tracker = getTracker();
-        const deleted = tracker.deleteChannel(channelId);
+        const jobQueue = getJobQueue();
+        const job = jobQueue.createJob("delete_channel", { channelId });
 
-        if (!deleted) {
-          const response = Response.json(
-            { success: false, message: "Channel not found" },
-            { status: 404 }
-          );
-          Object.entries(corsHeaders).forEach(([key, value]) => {
-            response.headers.set(key, value);
-          });
-          return response;
-        }
-
-        const response = Response.json({ success: true, message: "Channel and all videos deleted" });
+        const response = Response.json({
+          success: true,
+          message: "Channel deletion queued",
+          jobId: job.id,
+        });
         Object.entries(corsHeaders).forEach(([key, value]) => {
           response.headers.set(key, value);
         });
         return response;
       } catch (err: any) {
-        console.error("Error deleting channel:", err);
+        console.error("Error queuing channel deletion:", err);
         const response = Response.json(
-          { success: false, message: err?.message || "Failed to delete channel" },
+          { success: false, message: err?.message || "Failed to queue channel deletion" },
           { status: 500 }
         );
         Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -503,29 +497,22 @@ const server = serve({
     if (playlistDeleteMatch && req.method === "DELETE") {
       try {
         const playlistId = playlistDeleteMatch[1];
-        const tracker = getTracker();
-        const deleted = tracker.deletePlaylist(playlistId);
+        const jobQueue = getJobQueue();
+        const job = jobQueue.createJob("delete_playlist", { playlistId });
 
-        if (!deleted) {
-          const response = Response.json(
-            { success: false, message: "Playlist not found" },
-            { status: 404 }
-          );
-          Object.entries(corsHeaders).forEach(([key, value]) => {
-            response.headers.set(key, value);
-          });
-          return response;
-        }
-
-        const response = Response.json({ success: true, message: "Playlist and all videos deleted" });
+        const response = Response.json({
+          success: true,
+          message: "Playlist deletion queued",
+          jobId: job.id,
+        });
         Object.entries(corsHeaders).forEach(([key, value]) => {
           response.headers.set(key, value);
         });
         return response;
       } catch (err: any) {
-        console.error("Error deleting playlist:", err);
+        console.error("Error queuing playlist deletion:", err);
         const response = Response.json(
-          { success: false, message: err?.message || "Failed to delete playlist" },
+          { success: false, message: err?.message || "Failed to queue playlist deletion" },
           { status: 500 }
         );
         Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -533,6 +520,46 @@ const server = serve({
         });
         return response;
       }
+    }
+
+    // Job status API routes
+    if (pathname === "/api/jobs" && req.method === "GET") {
+      const jobQueue = getJobQueue();
+      const limit = parseInt(url.searchParams.get("limit") || "100", 10);
+      const jobs = jobQueue.getAllJobs(limit);
+      const response = Response.json({
+        success: true,
+        jobs,
+      });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    // Get specific job: GET /api/jobs/:id
+    const jobMatch = pathname.match(/^\/api\/jobs\/([^\/]+)$/);
+    if (jobMatch && req.method === "GET") {
+      const jobId = jobMatch[1];
+      const jobQueue = getJobQueue();
+      const job = jobQueue.getJob(jobId);
+
+      if (!job) {
+        const response = Response.json(
+          { success: false, message: "Job not found" },
+          { status: 404 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+
+      const response = Response.json({ success: true, job });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
     }
 
     // Download status API route
@@ -593,29 +620,22 @@ const server = serve({
           });
           return response;
         }
-        const tracker = getTracker();
-        const deleted = tracker.deleteVideo(videoId, relativePath);
+        const jobQueue = getJobQueue();
+        const job = jobQueue.createJob("delete_video", { videoId, relativePath });
 
-        if (!deleted) {
-          const response = Response.json(
-            { success: false, message: "Video not found" },
-            { status: 404 }
-          );
-          Object.entries(corsHeaders).forEach(([key, value]) => {
-            response.headers.set(key, value);
-          });
-          return response;
-        }
-
-        const response = Response.json({ success: true, message: "Video deleted" });
+        const response = Response.json({
+          success: true,
+          message: "Video deletion queued",
+          jobId: job.id,
+        });
         Object.entries(corsHeaders).forEach(([key, value]) => {
           response.headers.set(key, value);
         });
         return response;
       } catch (err: any) {
-        console.error("Error deleting video:", err);
+        console.error("Error queuing video deletion:", err);
         const response = Response.json(
-          { success: false, message: err?.message || "Failed to delete video" },
+          { success: false, message: err?.message || "Failed to queue video deletion" },
           { status: 500 }
         );
         Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -739,7 +759,6 @@ const server = serve({
       try {
         const collectionId = collectionDeleteMatch[1];
         const collectionsManager = getCollectionsManager();
-        const tracker = getTracker();
         const collection = collectionsManager.getCollection(collectionId);
         
         if (!collection) {
@@ -753,33 +772,22 @@ const server = serve({
           return response;
         }
 
-        // Delete all videos in the collection (async file deletion)
-        const videoResult = tracker.deleteVideosByCollectionPath(collection.rootPath);
-        
-        // Delete collection directory and all contents asynchronously (non-blocking)
-        const collectionPath = collection.rootPath;
-        if (existsSync(collectionPath)) {
-          rm(collectionPath, { recursive: true, force: true }).catch((error) => {
-            console.error("Error deleting collection directory:", error);
-          });
-        }
+        const jobQueue = getJobQueue();
+        const job = jobQueue.createJob("delete_collection", { collectionId });
 
-        // Delete collection entry
-        const deleted = collectionsManager.deleteCollection(collectionId, () => videoResult);
-
-        const response = Response.json({ 
-          success: true, 
-          message: `Collection deleted: ${videoResult.deletedVideos} videos removed`,
-          deletedVideos: videoResult.deletedVideos
+        const response = Response.json({
+          success: true,
+          message: "Collection deletion queued",
+          jobId: job.id,
         });
         Object.entries(corsHeaders).forEach(([key, value]) => {
           response.headers.set(key, value);
         });
         return response;
       } catch (err: any) {
-        console.error("Error deleting collection:", err);
+        console.error("Error queuing collection deletion:", err);
         const response = Response.json(
-          { success: false, message: err?.message || "Failed to delete collection" },
+          { success: false, message: err?.message || "Failed to queue collection deletion" },
           { status: 500 }
         );
         Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -797,8 +805,6 @@ const server = serve({
         const body = await req.json();
         const { name, rootPath } = body;
         const collectionsManager = getCollectionsManager();
-        const tracker = getTracker();
-        const scheduler = getScheduler();
         
         const collection = collectionsManager.getCollection(collectionId);
         if (!collection) {
@@ -812,47 +818,22 @@ const server = serve({
           return response;
         }
 
-        // Resolve rootPath if provided
-        const resolvedRootPath = rootPath ? resolve(rootPath) : undefined;
+        const jobQueue = getJobQueue();
+        const job = jobQueue.createJob("move_collection", { collectionId, name, rootPath });
 
-        // Ensure target directory exists if path is changing
-        if (resolvedRootPath && resolvedRootPath !== collection.rootPath) {
-          try {
-            mkdirSync(resolvedRootPath, { recursive: true });
-          } catch (error) {
-            console.warn(`[${new Date().toISOString()}] Failed to create target directory:`, error);
-          }
-        }
-
-        // Move collection
-        const updated = collectionsManager.moveCollection(
-          collectionId,
-          name,
-          resolvedRootPath,
-          (oldPath, newPath) => tracker.updateVideoPathsForCollectionMove(oldPath, newPath, DOWNLOADS_ROOT),
-          (oldId, newId) => scheduler.updateSchedulesCollectionId(oldId, newId)
-        );
-
-        if (!updated) {
-          const response = Response.json(
-            { success: false, message: "Failed to move collection" },
-            { status: 500 }
-          );
-          Object.entries(corsHeaders).forEach(([key, value]) => {
-            response.headers.set(key, value);
-          });
-          return response;
-        }
-
-        const response = Response.json({ success: true, collection: updated });
+        const response = Response.json({
+          success: true,
+          message: "Collection move queued",
+          jobId: job.id,
+        });
         Object.entries(corsHeaders).forEach(([key, value]) => {
           response.headers.set(key, value);
         });
         return response;
       } catch (err: any) {
-        console.error("Error moving collection:", err);
+        console.error("Error queuing collection move:", err);
         const response = Response.json(
-          { success: false, message: err?.message || "Failed to move collection" },
+          { success: false, message: err?.message || "Failed to queue collection move" },
           { status: 500 }
         );
         Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -870,8 +851,6 @@ const server = serve({
         const body = await req.json();
         const { targetId } = body;
         const collectionsManager = getCollectionsManager();
-        const tracker = getTracker();
-        const scheduler = getScheduler();
         
         if (!targetId) {
           const response = Response.json(
@@ -909,41 +888,22 @@ const server = serve({
           return response;
         }
 
-        // Ensure target directory exists
-        try {
-          mkdirSync(target.rootPath, { recursive: true });
-        } catch (error) {
-          console.warn(`[${new Date().toISOString()}] Failed to create target directory:`, error);
-        }
+        const jobQueue = getJobQueue();
+        const job = jobQueue.createJob("merge_collection", { sourceId, targetId });
 
-        // Merge collections
-        const merged = collectionsManager.mergeCollection(
-          sourceId,
-          targetId,
-          (sourcePath, targetPath) => tracker.updateVideoPathsForCollectionMove(sourcePath, targetPath, DOWNLOADS_ROOT),
-          (oldId, newId) => scheduler.updateSchedulesCollectionId(oldId, newId)
-        );
-
-        if (!merged) {
-          const response = Response.json(
-            { success: false, message: "Failed to merge collection" },
-            { status: 500 }
-          );
-          Object.entries(corsHeaders).forEach(([key, value]) => {
-            response.headers.set(key, value);
-          });
-          return response;
-        }
-
-        const response = Response.json({ success: true, collection: merged });
+        const response = Response.json({
+          success: true,
+          message: "Collection merge queued",
+          jobId: job.id,
+        });
         Object.entries(corsHeaders).forEach(([key, value]) => {
           response.headers.set(key, value);
         });
         return response;
       } catch (err: any) {
-        console.error("Error merging collection:", err);
+        console.error("Error queuing collection merge:", err);
         const response = Response.json(
-          { success: false, message: err?.message || "Failed to merge collection" },
+          { success: false, message: err?.message || "Failed to queue collection merge" },
           { status: 500 }
         );
         Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -1139,6 +1099,9 @@ const server = serve({
 
 // Initialize scheduler (loads schedules from disk)
 getScheduler();
+
+// Initialize job queue (starts processing jobs)
+getJobQueue();
 
 console.log(`YouTube Download Server running on port ${server.port}`);
 console.log(`Downloads root: ${DOWNLOADS_ROOT}`);

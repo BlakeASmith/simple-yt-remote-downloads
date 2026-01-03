@@ -4,10 +4,12 @@ import {
   apiSend,
   defaultsForFormat,
   normalizeScheduleUpdates,
+  pollJobStatus,
   type Collection,
   type DownloadRequest,
   type DownloadLogResponse,
   type DownloadStatus,
+  type Job,
   type Schedule,
   type TrackedChannel,
   type TrackedPlaylist,
@@ -638,16 +640,29 @@ function CollectionsModal(props: {
                         const collectionName = c.name;
                         // Optimistically update UI immediately
                         props.onCollectionsUpdate(prev => prev.filter(col => col.id !== collectionId));
-                        props.showToast("good", `Collection "${collectionName}" deleted.`);
-                        const r = await apiSend<{ success: boolean; message?: string; deletedVideos?: number }>(`/api/collections/${collectionId}`, "DELETE");
+                        props.showToast("good", `Collection "${collectionName}" deletion queued...`);
+                        const r = await apiSend<{ success: boolean; message?: string; jobId?: string }>(`/api/collections/${collectionId}`, "DELETE");
                         if (!r.ok) {
                           // Revert on error
                           await props.onChanged();
                           return props.showToast("bad", r.message);
                         }
-                        const videoCount = r.data.deletedVideos ?? 0;
-                        if (videoCount > 0) {
-                          props.showToast("good", `Collection deleted. ${videoCount} videos removed.`);
+                        if (r.data.jobId) {
+                          // Poll for job completion
+                          const jobResult = await pollJobStatus(r.data.jobId);
+                          if (jobResult.ok && jobResult.data.status === "completed") {
+                            const videoCount = jobResult.data.result?.deletedVideos ?? 0;
+                            if (videoCount > 0) {
+                              props.showToast("good", `Collection deleted. ${videoCount} videos removed.`);
+                            } else {
+                              props.showToast("good", `Collection "${collectionName}" deleted.`);
+                            }
+                          } else if (jobResult.ok && jobResult.data.status === "failed") {
+                            props.showToast("bad", jobResult.data.error || "Failed to delete collection");
+                            await props.onChanged();
+                          }
+                        } else {
+                          props.showToast("good", `Collection "${collectionName}" deleted.`);
                         }
                         // Refresh to ensure consistency
                         await props.onChanged();
@@ -807,14 +822,26 @@ function MoveCollectionModal(props: {
                 if (!r) return props.showToast("bad", "Root path is required.");
                 setBusy(true);
                 try {
-                  const res = await apiSend<{ success: boolean; collection?: Collection; message?: string }>(
+                  props.showToast("good", "Collection move queued...");
+                  const res = await apiSend<{ success: boolean; message?: string; jobId?: string }>(
                     `/api/collections/${c.id}/move`,
                     "POST",
                     { name: n, rootPath: r }
                   );
                   if (!res.ok) return props.showToast("bad", res.message);
-                  if (!res.data.success) return props.showToast("bad", res.data.message || "Failed to move collection");
-                  props.showToast("good", "Collection moved successfully.");
+                  if (!res.data.success) return props.showToast("bad", res.data.message || "Failed to queue collection move");
+                  if (res.data.jobId) {
+                    // Poll for job completion
+                    const jobResult = await pollJobStatus(res.data.jobId);
+                    if (jobResult.ok && jobResult.data.status === "completed") {
+                      props.showToast("good", "Collection moved successfully.");
+                    } else if (jobResult.ok && jobResult.data.status === "failed") {
+                      props.showToast("bad", jobResult.data.error || "Failed to move collection");
+                      return;
+                    }
+                  } else {
+                    props.showToast("good", "Collection moved successfully.");
+                  }
                   await props.onMoved();
                 } finally {
                   setBusy(false);
@@ -879,14 +906,26 @@ function MergeCollectionModal(props: {
                 if (!window.confirm(`Merge "${source.name}" into the selected collection? This will move all videos and delete "${source.name}". This cannot be undone.`)) return;
                 setBusy(true);
                 try {
-                  const res = await apiSend<{ success: boolean; collection?: Collection; message?: string }>(
+                  props.showToast("good", "Collection merge queued...");
+                  const res = await apiSend<{ success: boolean; message?: string; jobId?: string }>(
                     `/api/collections/${source.id}/merge`,
                     "POST",
                     { targetId }
                   );
                   if (!res.ok) return props.showToast("bad", res.message);
-                  if (!res.data.success) return props.showToast("bad", res.data.message || "Failed to merge collection");
-                  props.showToast("good", "Collection merged successfully.");
+                  if (!res.data.success) return props.showToast("bad", res.data.message || "Failed to queue collection merge");
+                  if (res.data.jobId) {
+                    // Poll for job completion
+                    const jobResult = await pollJobStatus(res.data.jobId);
+                    if (jobResult.ok && jobResult.data.status === "completed") {
+                      props.showToast("good", "Collection merged successfully.");
+                    } else if (jobResult.ok && jobResult.data.status === "failed") {
+                      props.showToast("bad", jobResult.data.error || "Failed to merge collection");
+                      return;
+                    }
+                  } else {
+                    props.showToast("good", "Collection merged successfully.");
+                  }
                   await props.onMerged();
                 } finally {
                   setBusy(false);
@@ -1338,8 +1377,8 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                   const relativePath = v.relativePath;
                                   // Optimistically update UI immediately
                                   setVideos(prev => prev.filter(vid => `${vid.id}:${vid.relativePath}` !== videoKey));
-                                  props.showToast("good", "Video deleted.");
-                                  const r = await apiSend<{ success: boolean; message?: string }>(
+                                  props.showToast("good", "Video deletion queued...");
+                                  const r = await apiSend<{ success: boolean; message?: string; jobId?: string }>(
                                     `/api/tracker/videos/${encodeURIComponent(videoId)}?relativePath=${encodeURIComponent(relativePath)}`,
                                     "DELETE"
                                   );
@@ -1347,6 +1386,18 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                     // Revert on error
                                     await loadAll();
                                     return props.showToast("bad", r.message);
+                                  }
+                                  if (r.data.jobId) {
+                                    // Poll for job completion
+                                    const jobResult = await pollJobStatus(r.data.jobId);
+                                    if (jobResult.ok && jobResult.data.status === "completed") {
+                                      props.showToast("good", "Video deleted.");
+                                    } else if (jobResult.ok && jobResult.data.status === "failed") {
+                                      props.showToast("bad", jobResult.data.error || "Failed to delete video");
+                                      await loadAll();
+                                    }
+                                  } else {
+                                    props.showToast("good", "Video deleted.");
                                   }
                                   // Refresh to ensure consistency
                                   await loadAll();
@@ -1506,12 +1557,24 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                 setChannels(prev => prev.filter(ch => ch.id !== channelId));
                                 // Also remove videos from this channel from the videos list
                                 setVideos(prev => prev.filter(v => v.channelId !== channelIdForVideos && v.channel !== channelName));
-                                props.showToast("good", "Channel and all videos deleted.");
-                                const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/channels/${channelId}`, "DELETE");
+                                props.showToast("good", "Channel deletion queued...");
+                                const r = await apiSend<{ success: boolean; message?: string; jobId?: string }>(`/api/tracker/channels/${channelId}`, "DELETE");
                                 if (!r.ok) {
                                   // Revert on error
                                   await loadAll();
                                   return props.showToast("bad", r.message);
+                                }
+                                if (r.data.jobId) {
+                                  // Poll for job completion
+                                  const jobResult = await pollJobStatus(r.data.jobId);
+                                  if (jobResult.ok && jobResult.data.status === "completed") {
+                                    props.showToast("good", "Channel and all videos deleted.");
+                                  } else if (jobResult.ok && jobResult.data.status === "failed") {
+                                    props.showToast("bad", jobResult.data.error || "Failed to delete channel");
+                                    await loadAll();
+                                  }
+                                } else {
+                                  props.showToast("good", "Channel and all videos deleted.");
                                 }
                                 // Refresh to ensure consistency
                                 await loadAll();
@@ -1557,12 +1620,24 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                 const playlistId = p.id;
                                 // Optimistically update UI immediately
                                 setPlaylists(prev => prev.filter(pl => pl.id !== playlistId));
-                                props.showToast("good", "Playlist and all videos deleted.");
-                                const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/playlists/${playlistId}`, "DELETE");
+                                props.showToast("good", "Playlist deletion queued...");
+                                const r = await apiSend<{ success: boolean; message?: string; jobId?: string }>(`/api/tracker/playlists/${playlistId}`, "DELETE");
                                 if (!r.ok) {
                                   // Revert on error
                                   await loadAll();
                                   return props.showToast("bad", r.message);
+                                }
+                                if (r.data.jobId) {
+                                  // Poll for job completion
+                                  const jobResult = await pollJobStatus(r.data.jobId);
+                                  if (jobResult.ok && jobResult.data.status === "completed") {
+                                    props.showToast("good", "Playlist and all videos deleted.");
+                                  } else if (jobResult.ok && jobResult.data.status === "failed") {
+                                    props.showToast("bad", jobResult.data.error || "Failed to delete playlist");
+                                    await loadAll();
+                                  }
+                                } else {
+                                  props.showToast("good", "Playlist and all videos deleted.");
                                 }
                                 // Refresh to ensure consistency
                                 await loadAll();
