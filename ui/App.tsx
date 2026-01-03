@@ -18,7 +18,7 @@ import { formatBytes, formatDuration, formatInterval, formatTime, toMinutes, typ
 import { isChannelInput, isPlaylistInput } from "./lib/youtube-detect";
 import { Badge, Button, Card, Checkbox, Input, Modal, Radio, Select, Toast, cx } from "./components/ui";
 
-type Page = "downloads" | "tracking";
+type Page = "downloads" | "tracking" | "developer";
 type TrackingTab = "videos" | "channels" | "playlists";
 
 function getPageFromHash(): Page | null {
@@ -27,6 +27,7 @@ function getPageFromHash(): Page | null {
   const base = raw.split("/")[0];
   if (base === "tracking") return "tracking";
   if (base === "downloads") return "downloads";
+  if (base === "developer") return "developer";
   return null;
 }
 
@@ -95,6 +96,12 @@ export function App() {
       }
       return;
     }
+    if (page === "developer") {
+      if (window.location.hash !== "#developer") {
+        window.history.replaceState(null, "", "#developer");
+      }
+      return;
+    }
     if (window.location.hash !== "#downloads") {
       window.history.replaceState(null, "", "#downloads");
     }
@@ -113,7 +120,7 @@ export function App() {
               <div className="text-xs text-white/55">Fast queueing + schedules + tracking</div>
             </div>
           </div>
-          <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col">
+          <div className="grid w-full grid-cols-3 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col">
             <Button
               className="w-full"
               variant={page === "downloads" ? "primary" : "ghost"}
@@ -132,11 +139,26 @@ export function App() {
             >
               Tracking
             </Button>
+            <Button
+              className="w-full"
+              variant={page === "developer" ? "primary" : "ghost"}
+              onClick={() => {
+                window.location.hash = "#developer";
+              }}
+            >
+              Developer
+            </Button>
           </div>
         </div>
 
         <div className="mt-6 grid gap-6">
-          {page === "downloads" ? <DownloadsPage showToast={showToast} /> : <TrackingPage showToast={showToast} />}
+          {page === "downloads" ? (
+            <DownloadsPage showToast={showToast} />
+          ) : page === "tracking" ? (
+            <TrackingPage showToast={showToast} />
+          ) : (
+            <DeveloperPage showToast={showToast} />
+          )}
         </div>
       </div>
 
@@ -1270,6 +1292,170 @@ function Stat(props: { label: string; value: React.ReactNode }) {
     <div className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
       <div className="text-xs font-semibold text-white/60">{props.label}</div>
       <div className="mt-1 text-lg font-bold text-white">{props.value}</div>
+    </div>
+  );
+}
+
+function DeveloperPage(props: { showToast: (tone: "good" | "bad", message: string) => void }) {
+  const [testRunning, setTestRunning] = useState(false);
+  const [cleanupRunning, setCleanupRunning] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    collection?: Collection;
+    downloads?: Array<{ videoId: string; url: string; success: boolean; message?: string }>;
+    message?: string;
+  } | null>(null);
+  const [cleanupResult, setCleanupResult] = useState<{
+    message?: string;
+    deletedCollection?: boolean;
+    deletedFiles?: number;
+    deletedTrackedVideos?: number;
+  } | null>(null);
+
+  async function runTest() {
+    setTestRunning(true);
+    setTestResult(null);
+    try {
+      const res = await apiSend<{
+        success: boolean;
+        collection?: Collection;
+        downloads?: Array<{ videoId: string; url: string; success: boolean; message?: string }>;
+        message?: string;
+      }>("/api/dev/test", "POST");
+      
+      if (res.ok && res.data.success) {
+        setTestResult(res.data);
+        props.showToast("good", res.data.message || "Test started successfully");
+      } else {
+        props.showToast("bad", res.ok ? res.data.message || "Test failed" : res.message);
+      }
+    } catch (error: any) {
+      props.showToast("bad", error?.message || "Failed to run test");
+    } finally {
+      setTestRunning(false);
+    }
+  }
+
+  async function runCleanup() {
+    if (!window.confirm("Delete all test files and collection? This cannot be undone.")) {
+      return;
+    }
+    
+    setCleanupRunning(true);
+    setCleanupResult(null);
+    try {
+      const res = await apiSend<{
+        success: boolean;
+        message?: string;
+        deletedCollection?: boolean;
+        deletedFiles?: number;
+        deletedTrackedVideos?: number;
+      }>("/api/dev/cleanup", "POST");
+      
+      if (res.ok && res.data.success) {
+        setCleanupResult(res.data);
+        props.showToast("good", res.data.message || "Cleanup completed");
+      } else {
+        props.showToast("bad", res.ok ? res.data.message || "Cleanup failed" : res.message);
+      }
+    } catch (error: any) {
+      props.showToast("bad", error?.message || "Failed to cleanup");
+    } finally {
+      setCleanupRunning(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-6">
+      <SectionHeader
+        title="Developer Tools"
+        subtitle="Test collection creation and video downloads, then clean up test files"
+      />
+
+      <Card>
+        <div className="grid gap-4">
+          <div>
+            <div className="text-sm font-semibold text-white/85">Test Functionality</div>
+            <div className="mt-1 text-xs text-white/55">
+              Creates a test collection and downloads a few short videos to verify the main functionality works correctly.
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button onClick={runTest} disabled={testRunning}>
+              {testRunning ? "Running test…" : "Run Test"}
+            </Button>
+          </div>
+
+          {testResult ? (
+            <div className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
+              <div className="text-sm font-semibold text-white/85 mb-2">Test Results</div>
+              {testResult.collection ? (
+                <div className="mb-3 text-xs text-white/70">
+                  <div>Collection: <span className="text-white/85">{testResult.collection.name}</span></div>
+                  <div>Path: <span className="text-white/85 font-mono">{testResult.collection.rootPath}</span></div>
+                </div>
+              ) : null}
+              {testResult.downloads ? (
+                <div className="text-xs text-white/70">
+                  <div className="font-semibold mb-1">Downloads:</div>
+                  {testResult.downloads.map((d, idx) => (
+                    <div key={idx} className="ml-2 mb-1">
+                      <a href={d.url} target="_blank" rel="noreferrer" className="text-sky-300 hover:text-sky-200">
+                        {d.videoId}
+                      </a>
+                      {" "}
+                      <Badge tone={d.success ? "good" : "bad"}>
+                        {d.success ? "Started" : "Failed"}
+                      </Badge>
+                      {d.message ? <span className="ml-2 text-white/55">({d.message})</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {testResult.message ? (
+                <div className="mt-2 text-xs text-white/70">{testResult.message}</div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Card>
+
+      <Card>
+        <div className="grid gap-4">
+          <div>
+            <div className="text-sm font-semibold text-white/85">Cleanup Test Files</div>
+            <div className="mt-1 text-xs text-white/55">
+              Deletes the test collection, all downloaded test files, and removes tracked videos from the database.
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="danger" onClick={runCleanup} disabled={cleanupRunning}>
+              {cleanupRunning ? "Cleaning up…" : "Delete Test Files"}
+            </Button>
+          </div>
+
+          {cleanupResult ? (
+            <div className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
+              <div className="text-sm font-semibold text-white/85 mb-2">Cleanup Results</div>
+              <div className="text-xs text-white/70">
+                {cleanupResult.deletedCollection !== undefined ? (
+                  <div>Collection deleted: <span className="text-white/85">{cleanupResult.deletedCollection ? "Yes" : "No"}</span></div>
+                ) : null}
+                {cleanupResult.deletedFiles !== undefined ? (
+                  <div>Files removed: <span className="text-white/85">{cleanupResult.deletedFiles}</span></div>
+                ) : null}
+                {cleanupResult.deletedTrackedVideos !== undefined ? (
+                  <div>Tracked videos removed: <span className="text-white/85">{cleanupResult.deletedTrackedVideos}</span></div>
+                ) : null}
+                {cleanupResult.message ? (
+                  <div className="mt-2">{cleanupResult.message}</div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </Card>
     </div>
   );
 }
