@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from "fs";
 import { Database } from "bun:sqlite";
+import { resolve, relative, join, dirname } from "path";
 
 export const TRACKER_DB = "/downloads/.tracker.db";
 
@@ -719,6 +720,101 @@ class Tracker {
     
     // Note: deletedFiles count is not tracked here since deleteVideo handles file deletion internally
     return { deletedVideos, deletedFiles: 0 };
+  }
+
+  /**
+   * Update video paths when a collection is moved or merged
+   * Updates fullPath and relativePath for all videos in the old collection path
+   */
+  updateVideoPathsForCollectionMove(oldRootPath: string, newRootPath: string, downloadsRoot: string = "/downloads"): { updatedVideos: number } {
+    const resolvedOldPath = resolve(oldRootPath);
+    const resolvedNewPath = resolve(newRootPath);
+    const resolvedDownloadsRoot = resolve(downloadsRoot);
+
+    // Get all videos whose fullPath starts with oldRootPath
+    const allVideos = this.getAllVideos();
+    const videosToUpdate = allVideos.filter(v => {
+      try {
+        return resolve(v.fullPath).startsWith(resolvedOldPath);
+      } catch {
+        return false;
+      }
+    });
+
+    let updatedCount = 0;
+
+    for (const video of videosToUpdate) {
+      try {
+        const oldFullPath = resolve(video.fullPath);
+        // Calculate relative path from old collection root to the video file
+        const relativeFromOldRoot = relative(resolvedOldPath, oldFullPath);
+        const newFullPath = join(resolvedNewPath, relativeFromOldRoot);
+        
+        // Calculate new relativePath from downloads root
+        const newRelativePath = relative(resolvedDownloadsRoot, newFullPath);
+
+        // Update video in database
+        const updateVideoPathStmt = this.db.prepare(`
+          UPDATE videos
+          SET fullPath = ?, relativePath = ?
+          WHERE id = ? AND relativePath = ?
+        `);
+        
+        const result = updateVideoPathStmt.run(newFullPath, newRelativePath, video.id, video.relativePath);
+        
+        if (result.changes > 0) {
+          // Get files before updating (using old relativePath)
+          const files = this.getVideoFilesStmt.all(video.id, video.relativePath) as Array<{
+            path: string;
+            kind: string;
+            intermediate: number;
+            exists: number;
+            hidden: number;
+            firstSeenAt: number;
+            deletedAt: number | null;
+          }>;
+
+          // Update tracked_files paths and videoRelativePath
+          for (const file of files) {
+            const oldFilePath = resolve(file.path);
+            if (oldFilePath.startsWith(resolvedOldPath)) {
+              const fileRelativeFromOldRoot = relative(resolvedOldPath, oldFilePath);
+              const newFilePath = join(resolvedNewPath, fileRelativeFromOldRoot);
+
+              // Update file path and videoRelativePath
+              const updateFilePathStmt = this.db.prepare(`
+                UPDATE tracked_files
+                SET path = ?, videoRelativePath = ?
+                WHERE videoId = ? AND videoRelativePath = ? AND path = ?
+              `);
+              updateFilePathStmt.run(newFilePath, newRelativePath, video.id, video.relativePath, file.path);
+            }
+          }
+
+          // Update videoRelativePath in channel_videos and playlist_videos
+          const updateChannelVideosStmt = this.db.prepare(`
+            UPDATE channel_videos
+            SET videoRelativePath = ?
+            WHERE videoId = ? AND videoRelativePath = ?
+          `);
+          updateChannelVideosStmt.run(newRelativePath, video.id, video.relativePath);
+
+          const updatePlaylistVideosStmt = this.db.prepare(`
+            UPDATE playlist_videos
+            SET videoRelativePath = ?
+            WHERE videoId = ? AND videoRelativePath = ?
+          `);
+          updatePlaylistVideosStmt.run(newRelativePath, video.id, video.relativePath);
+
+          updatedCount++;
+        }
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error updating video path for ${video.id}:`, error);
+      }
+    }
+
+    console.log(`[${new Date().toISOString()}] Updated ${updatedCount} video paths from ${resolvedOldPath} to ${resolvedNewPath}`);
+    return { updatedVideos: updatedCount };
   }
 
   /**

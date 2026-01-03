@@ -789,6 +789,170 @@ const server = serve({
       }
     }
 
+    // Move collection: POST /api/collections/:id/move
+    const collectionMoveMatch = pathname.match(/^\/api\/collections\/([^\/]+)\/move$/);
+    if (collectionMoveMatch && req.method === "POST") {
+      try {
+        const collectionId = collectionMoveMatch[1];
+        const body = await req.json();
+        const { name, rootPath } = body;
+        const collectionsManager = getCollectionsManager();
+        const tracker = getTracker();
+        const scheduler = getScheduler();
+        
+        const collection = collectionsManager.getCollection(collectionId);
+        if (!collection) {
+          const response = Response.json(
+            { success: false, message: "Collection not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        // Resolve rootPath if provided
+        const resolvedRootPath = rootPath ? resolve(rootPath) : undefined;
+
+        // Ensure target directory exists if path is changing
+        if (resolvedRootPath && resolvedRootPath !== collection.rootPath) {
+          try {
+            mkdirSync(resolvedRootPath, { recursive: true });
+          } catch (error) {
+            console.warn(`[${new Date().toISOString()}] Failed to create target directory:`, error);
+          }
+        }
+
+        // Move collection
+        const updated = collectionsManager.moveCollection(
+          collectionId,
+          name,
+          resolvedRootPath,
+          (oldPath, newPath) => tracker.updateVideoPathsForCollectionMove(oldPath, newPath, DOWNLOADS_ROOT),
+          (oldId, newId) => scheduler.updateSchedulesCollectionId(oldId, newId)
+        );
+
+        if (!updated) {
+          const response = Response.json(
+            { success: false, message: "Failed to move collection" },
+            { status: 500 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const response = Response.json({ success: true, collection: updated });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err: any) {
+        console.error("Error moving collection:", err);
+        const response = Response.json(
+          { success: false, message: err?.message || "Failed to move collection" },
+          { status: 500 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
+    // Merge collection: POST /api/collections/:sourceId/merge
+    const collectionMergeMatch = pathname.match(/^\/api\/collections\/([^\/]+)\/merge$/);
+    if (collectionMergeMatch && req.method === "POST") {
+      try {
+        const sourceId = collectionMergeMatch[1];
+        const body = await req.json();
+        const { targetId } = body;
+        const collectionsManager = getCollectionsManager();
+        const tracker = getTracker();
+        const scheduler = getScheduler();
+        
+        if (!targetId) {
+          const response = Response.json(
+            { success: false, message: "Missing required field: targetId" },
+            { status: 400 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const source = collectionsManager.getCollection(sourceId);
+        const target = collectionsManager.getCollection(targetId);
+        
+        if (!source) {
+          const response = Response.json(
+            { success: false, message: "Source collection not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        if (!target) {
+          const response = Response.json(
+            { success: false, message: "Target collection not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        // Ensure target directory exists
+        try {
+          mkdirSync(target.rootPath, { recursive: true });
+        } catch (error) {
+          console.warn(`[${new Date().toISOString()}] Failed to create target directory:`, error);
+        }
+
+        // Merge collections
+        const merged = collectionsManager.mergeCollection(
+          sourceId,
+          targetId,
+          (sourcePath, targetPath) => tracker.updateVideoPathsForCollectionMove(sourcePath, targetPath, DOWNLOADS_ROOT),
+          (oldId, newId) => scheduler.updateSchedulesCollectionId(oldId, newId)
+        );
+
+        if (!merged) {
+          const response = Response.json(
+            { success: false, message: "Failed to merge collection" },
+            { status: 500 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const response = Response.json({ success: true, collection: merged });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err: any) {
+        console.error("Error merging collection:", err);
+        const response = Response.json(
+          { success: false, message: err?.message || "Failed to merge collection" },
+          { status: 500 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
     // Developer test API routes
     if (pathname === "/api/dev/test" && req.method === "POST") {
       try {

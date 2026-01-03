@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, renameSync, cpSync, rmSync } from "fs";
 import { Database } from "bun:sqlite";
+import { join, resolve, relative, dirname } from "path";
 
 export const COLLECTIONS_DB = "/downloads/.collections.db";
 
@@ -197,6 +198,124 @@ class CollectionsManager {
     
     console.log(`[${new Date().toISOString()}] Deleted collection: ${id} (${deletedVideos} videos removed)`);
     return true;
+  }
+
+  /**
+   * Move/rename a collection (change name and/or rootPath)
+   * Updates tracker, schedules, and moves files on disk
+   */
+  moveCollection(
+    id: string,
+    newName?: string,
+    newRootPath?: string,
+    updateTrackerCallback?: (oldRootPath: string, newRootPath: string) => { updatedVideos: number },
+    updateSchedulesCallback?: (oldCollectionId: string, newCollectionId: string) => void
+  ): Collection | null {
+    const existing = this.getCollection(id);
+    if (!existing) {
+      return null;
+    }
+
+    const finalName = newName ?? existing.name;
+    const finalRootPath = newRootPath ? resolve(newRootPath) : existing.rootPath;
+
+    // If rootPath is changing, move files on disk
+    if (finalRootPath !== existing.rootPath) {
+      try {
+        // Ensure target directory exists
+        if (!existsSync(finalRootPath)) {
+          mkdirSync(finalRootPath, { recursive: true });
+        }
+
+        // Move directory contents if source exists
+        if (existsSync(existing.rootPath)) {
+          // Use cpSync then rmSync for cross-filesystem compatibility
+          cpSync(existing.rootPath, finalRootPath, { recursive: true });
+          rmSync(existing.rootPath, { recursive: true, force: true });
+        }
+
+        // Update tracker (video paths)
+        if (updateTrackerCallback) {
+          const result = updateTrackerCallback(existing.rootPath, finalRootPath);
+          console.log(`[${new Date().toISOString()}] Updated ${result.updatedVideos} video paths in tracker`);
+        }
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error moving collection files:`, error);
+        throw new Error(`Failed to move collection files: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // Update collection database entry
+    const updatedAt = Date.now();
+    this.updateStmt.run(
+      finalName !== existing.name ? finalName : null,
+      finalRootPath !== existing.rootPath ? finalRootPath : null,
+      updatedAt,
+      id
+    );
+
+    console.log(`[${new Date().toISOString()}] Moved collection: ${id} (name: ${existing.name} -> ${finalName}, path: ${existing.rootPath} -> ${finalRootPath})`);
+    
+    return this.getCollection(id)!;
+  }
+
+  /**
+   * Merge one collection into another
+   * Moves all videos/files from source to target, updates tracker and schedules, then deletes source
+   */
+  mergeCollection(
+    sourceId: string,
+    targetId: string,
+    updateTrackerCallback?: (sourceRootPath: string, targetRootPath: string) => { updatedVideos: number },
+    updateSchedulesCallback?: (oldCollectionId: string, newCollectionId: string) => void,
+    deleteVideosCallback?: (rootPath: string) => { deletedVideos: number; deletedFiles: number }
+  ): Collection | null {
+    const source = this.getCollection(sourceId);
+    const target = this.getCollection(targetId);
+
+    if (!source || !target) {
+      return null;
+    }
+
+    if (sourceId === targetId) {
+      throw new Error("Cannot merge a collection into itself");
+    }
+
+    // Move files from source to target
+    if (existsSync(source.rootPath)) {
+      try {
+        // Ensure target directory exists
+        if (!existsSync(target.rootPath)) {
+          mkdirSync(target.rootPath, { recursive: true });
+        }
+
+        // Move all contents from source to target
+        // Use cpSync then rmSync for cross-filesystem compatibility
+        cpSync(source.rootPath, target.rootPath, { recursive: true });
+        rmSync(source.rootPath, { recursive: true, force: true });
+
+        // Update tracker (video paths)
+        if (updateTrackerCallback) {
+          const result = updateTrackerCallback(source.rootPath, target.rootPath);
+          console.log(`[${new Date().toISOString()}] Updated ${result.updatedVideos} video paths in tracker`);
+        }
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error merging collection files:`, error);
+        throw new Error(`Failed to merge collection files: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    // Update schedules to point to target collection
+    if (updateSchedulesCallback) {
+      updateSchedulesCallback(sourceId, targetId);
+    }
+
+    // Delete source collection (without deleting videos since they're moved)
+    this.deleteStmt.run(sourceId);
+    
+    console.log(`[${new Date().toISOString()}] Merged collection ${sourceId} into ${targetId}`);
+    
+    return this.getCollection(targetId)!;
   }
 }
 

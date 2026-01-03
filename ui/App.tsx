@@ -579,6 +579,8 @@ function CollectionsModal(props: {
   const [name, setName] = useState("");
   const [rootPath, setRootPath] = useState("");
   const [busy, setBusy] = useState(false);
+  const [moveCollection, setMoveCollection] = useState<Collection | null>(null);
+  const [mergeSource, setMergeSource] = useState<Collection | null>(null);
 
   function suggestedRootPath(n: string) {
     const trimmed = n.trim();
@@ -608,7 +610,19 @@ function CollectionsModal(props: {
                     <div className="truncate text-sm font-semibold text-white">{c.name}</div>
                     <div className="truncate text-xs text-white/55">{c.rootPath}</div>
                   </div>
-                  <div className="flex justify-end sm:justify-start">
+                  <div className="flex flex-wrap justify-end gap-2 sm:justify-start">
+                    <Button
+                      variant="ghost"
+                      onClick={() => setMoveCollection(c)}
+                    >
+                      Move/Rename
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setMergeSource(c)}
+                    >
+                      Merge
+                    </Button>
                     <Button
                       variant="danger"
                       onClick={async () => {
@@ -677,6 +691,194 @@ function CollectionsModal(props: {
           </div>
         </div>
       </div>
+
+      <MoveCollectionModal
+        open={!!moveCollection}
+        collection={moveCollection}
+        onClose={() => setMoveCollection(null)}
+        onMoved={async () => {
+          setMoveCollection(null);
+          await props.onChanged();
+        }}
+        showToast={props.showToast}
+      />
+
+      <MergeCollectionModal
+        open={!!mergeSource}
+        sourceCollection={mergeSource}
+        collections={props.collections.filter(c => c.id !== mergeSource?.id)}
+        onClose={() => setMergeSource(null)}
+        onMerged={async () => {
+          setMergeSource(null);
+          await props.onChanged();
+        }}
+        showToast={props.showToast}
+      />
+    </Modal>
+  );
+}
+
+function MoveCollectionModal(props: {
+  open: boolean;
+  collection: Collection | null;
+  onClose: () => void;
+  onMoved: () => Promise<void>;
+  showToast: (tone: "good" | "bad", message: string) => void;
+}) {
+  const c = props.collection;
+  const [name, setName] = useState("");
+  const [rootPath, setRootPath] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (c) {
+      setName(c.name);
+      setRootPath(c.rootPath);
+    }
+  }, [c]);
+
+  function suggestedRootPath(n: string) {
+    const trimmed = n.trim();
+    if (!trimmed) return "/downloads/<collection>";
+    const safe = trimmed
+      .replace(/[\/\\]/g, "-")
+      .replace(/[^a-zA-Z0-9 _.-]/g, "")
+      .trim()
+      .replace(/\s+/g, " ");
+    return `/downloads/${safe || "collection"}`;
+  }
+
+  return (
+    <Modal open={props.open} title={`Move/Rename: ${c?.name || ""}`} onClose={props.onClose}>
+      {!c ? null : (
+        <div className="grid gap-4">
+          <div className="text-xs text-white/60">
+            Change the collection name and/or path. All videos and files will be moved to the new location.
+          </div>
+          <div className="grid gap-3">
+            <div className="grid gap-2">
+              <div className="text-xs font-semibold text-white/70">Name</div>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Collection name" />
+            </div>
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs font-semibold text-white/70">Root path</div>
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-sky-300 hover:text-sky-200"
+                  onClick={() => setRootPath(suggestedRootPath(name))}
+                >
+                  Use suggested
+                </button>
+              </div>
+              <Input value={rootPath} onChange={(e) => setRootPath(e.target.value)} placeholder={suggestedRootPath(name)} />
+              <div className="text-xs text-white/55">Current: {c.rootPath}</div>
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={props.onClose}>
+              Cancel
+            </Button>
+            <Button
+              disabled={busy}
+              onClick={async () => {
+                const n = name.trim();
+                const r = rootPath.trim();
+                if (!n) return props.showToast("bad", "Name is required.");
+                if (!r) return props.showToast("bad", "Root path is required.");
+                setBusy(true);
+                try {
+                  const res = await apiSend<{ success: boolean; collection?: Collection; message?: string }>(
+                    `/api/collections/${c.id}/move`,
+                    "POST",
+                    { name: n, rootPath: r }
+                  );
+                  if (!res.ok) return props.showToast("bad", res.message);
+                  if (!res.data.success) return props.showToast("bad", res.data.message || "Failed to move collection");
+                  props.showToast("good", "Collection moved successfully.");
+                  await props.onMoved();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Move
+            </Button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function MergeCollectionModal(props: {
+  open: boolean;
+  sourceCollection: Collection | null;
+  collections: Collection[];
+  onClose: () => void;
+  onMerged: () => Promise<void>;
+  showToast: (tone: "good" | "bad", message: string) => void;
+}) {
+  const source = props.sourceCollection;
+  const [targetId, setTargetId] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (props.collections.length > 0 && !targetId) {
+      setTargetId(props.collections[0].id);
+    }
+  }, [props.collections, targetId]);
+
+  return (
+    <Modal open={props.open} title={`Merge: ${source?.name || ""}`} onClose={props.onClose}>
+      {!source ? null : (
+        <div className="grid gap-4">
+          <div className="text-xs text-white/60">
+            Merge "{source.name}" into another collection. All videos and files will be moved to the target collection, and this collection will be deleted.
+          </div>
+          <div className="grid gap-3">
+            <div className="grid gap-2">
+              <div className="text-xs font-semibold text-white/70">Target collection</div>
+              <Select value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+                {props.collections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.rootPath})
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" onClick={props.onClose}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={busy || !targetId}
+              onClick={async () => {
+                if (!targetId) return;
+                if (!window.confirm(`Merge "${source.name}" into the selected collection? This will move all videos and delete "${source.name}". This cannot be undone.`)) return;
+                setBusy(true);
+                try {
+                  const res = await apiSend<{ success: boolean; collection?: Collection; message?: string }>(
+                    `/api/collections/${source.id}/merge`,
+                    "POST",
+                    { targetId }
+                  );
+                  if (!res.ok) return props.showToast("bad", res.message);
+                  if (!res.data.success) return props.showToast("bad", res.data.message || "Failed to merge collection");
+                  props.showToast("good", "Collection merged successfully.");
+                  await props.onMerged();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Merge
+            </Button>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }

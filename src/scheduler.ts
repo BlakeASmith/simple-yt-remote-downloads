@@ -258,6 +258,22 @@ class Scheduler {
   }
 
   /**
+   * Update collectionId for all schedules referencing a specific collection
+   */
+  updateSchedulesCollectionId(oldCollectionId: string, newCollectionId: string): number {
+    const updateStmt = this.db.prepare(`
+      UPDATE schedules
+      SET collectionId = ?
+      WHERE collectionId = ?
+    `);
+    
+    const result = updateStmt.run(newCollectionId, oldCollectionId);
+    
+    console.log(`[${new Date().toISOString()}] Updated ${result.changes} schedules from collection ${oldCollectionId} to ${newCollectionId}`);
+    return result.changes;
+  }
+
+  /**
    * Convert a database row to Schedule
    */
   private rowToSchedule(row: any): Schedule {
