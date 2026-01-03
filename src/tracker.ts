@@ -39,6 +39,8 @@ export interface TrackedVideo {
   duration?: number; // seconds
   /** Full yt-dlp command used for this download (for reproducibility/auditing). */
   ytdlpCommand?: string;
+  /** Full video metadata JSON (from yt-dlp --dump-json) */
+  metadata?: Record<string, any>;
   /**
    * All associated files for this video (media, thumbnails, subtitles, intermediates, etc.).
    * This drives future media management features.
@@ -106,11 +108,25 @@ function initTrackerDatabase(): Database {
       fileSize INTEGER,
       duration REAL,
       ytdlpCommand TEXT,
+      metadata TEXT,
       deleted INTEGER DEFAULT 0,
       deletedAt INTEGER,
       PRIMARY KEY (id, relativePath)
     )
   `);
+  
+  // Add metadata column if it doesn't exist (for existing databases)
+  // Check if column exists by querying schema
+  try {
+    const tableInfo = db.prepare("PRAGMA table_info(videos)").all() as Array<{ name: string }>;
+    const hasMetadataColumn = tableInfo.some(col => col.name === "metadata");
+    if (!hasMetadataColumn) {
+      db.exec(`ALTER TABLE videos ADD COLUMN metadata TEXT`);
+    }
+  } catch (error) {
+    // Ignore errors - column might already exist or table might not exist yet
+    console.warn(`[${new Date().toISOString()}] Could not add metadata column (may already exist):`, error);
+  }
 
   // Create tracked_files table (one-to-many with videos)
   db.exec(`
@@ -230,8 +246,8 @@ class Tracker {
     // Prepare statements for videos
     this.insertVideoStmt = this.db.prepare(`
       INSERT OR REPLACE INTO videos 
-      (id, relativePath, title, channel, channelId, url, fullPath, downloadedAt, format, resolution, fileSize, duration, ytdlpCommand, deleted, deletedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, relativePath, title, channel, channelId, url, fullPath, downloadedAt, format, resolution, fileSize, duration, ytdlpCommand, metadata, deleted, deletedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     this.updateVideoStmt = this.db.prepare(`
@@ -402,6 +418,7 @@ class Tracker {
     }
 
     // Insert or update video
+    const metadataJson = trackedVideo.metadata ? JSON.stringify(trackedVideo.metadata) : null;
     this.insertVideoStmt.run(
       trackedVideo.id,
       trackedVideo.relativePath,
@@ -416,6 +433,7 @@ class Tracker {
       trackedVideo.fileSize ?? null,
       trackedVideo.duration ?? null,
       trackedVideo.ytdlpCommand ?? null,
+      metadataJson,
       existing?.deleted ?? 0,
       existing?.deletedAt ?? null
     );
@@ -943,6 +961,16 @@ class Tracker {
       deletedAt: number | null;
     }>;
 
+    // Parse metadata JSON if present
+    let metadata: Record<string, any> | undefined;
+    if (row.metadata) {
+      try {
+        metadata = JSON.parse(row.metadata);
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error parsing metadata for video ${row.id}:`, error);
+      }
+    }
+
     return {
       id: row.id,
       title: row.title,
@@ -957,6 +985,7 @@ class Tracker {
       fileSize: row.fileSize ?? undefined,
       duration: row.duration ?? undefined,
       ytdlpCommand: row.ytdlpCommand ?? undefined,
+      metadata,
       files: files.map(f => ({
         path: f.path,
         kind: f.kind as TrackedFileKind,
