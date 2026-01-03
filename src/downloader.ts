@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, statSync } from "fs";
 import { join, relative } from "path";
 import { getTracker } from "./tracker";
 import { getDownloadStatusTracker } from "./download-status";
+import { getCollectionsManager } from "./collections";
 
 const ARCHIVE_FILE = "/downloads/.archive";
 const DOWNLOADS_ROOT = "/downloads";
@@ -344,8 +345,15 @@ function getArchiveFilePath(options: DownloadOptions): string | null {
   // Determine format suffix: audio or video
   const formatSuffix = options.audioOnly ? "audio" : "video";
 
-  // If collection ID is provided, use collection-specific archive file
+  // If collection ID is provided, place archive file in collection root directory
   if (options.collectionId) {
+    const collectionsManager = getCollectionsManager();
+    const collection = collectionsManager.getCollection(options.collectionId);
+    if (collection) {
+      // Archive file co-located with collection files in the collection folder
+      return join(collection.rootPath, `.archive-${formatSuffix}`);
+    }
+    // Fallback if collection not found (shouldn't happen, but be safe)
     return `/downloads/.archive-${options.collectionId}-${formatSuffix}`;
   }
 
