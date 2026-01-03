@@ -402,15 +402,27 @@
           </label>
           <div id="scheduleOptions" class="hidden" style="margin-top: 1rem;">
             <div class="form-group" style="margin-bottom: 1rem;">
-              <label for="intervalMinutes">Check interval (minutes)</label>
-              <input 
-                type="number" 
-                id="intervalMinutes" 
-                name="intervalMinutes" 
-                min="1" 
-                value="60"
-                style="width: 100%; padding: 0.875rem 1rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 1rem;"
-              >
+              <label for="intervalValue">Check interval</label>
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <input 
+                  type="number" 
+                  id="intervalValue" 
+                  name="intervalValue" 
+                  min="1" 
+                  value="1"
+                  style="flex: 1; padding: 0.875rem 1rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 1rem;"
+                >
+                <select 
+                  id="intervalUnit" 
+                  name="intervalUnit"
+                  style="padding: 0.875rem 1rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 1rem; cursor: pointer;"
+                >
+                  <option value="hours">Hours</option>
+                  <option value="days" selected>Days</option>
+                  <option value="weeks">Weeks</option>
+                  <option value="months">Months</option>
+                </select>
+              </div>
             </div>
             <div style="font-size: 0.875rem; color: #b4b4b4;">
               The system will automatically check and download new videos at the specified interval. Only works for channels and playlists.
@@ -452,7 +464,8 @@
     const pathLabel = document.getElementById('pathLabel');
     const createScheduleCheckbox = document.getElementById('createSchedule');
     const scheduleOptions = document.getElementById('scheduleOptions');
-    const intervalMinutesInput = document.getElementById('intervalMinutes');
+    const intervalValueInput = document.getElementById('intervalValue');
+    const intervalUnitSelect = document.getElementById('intervalUnit');
     const schedulesList = document.getElementById('schedulesList');
 
     /**
@@ -709,7 +722,9 @@
       const isChannel = document.getElementById('isChannel').checked;
       const maxVideos = isChannel ? parseInt(document.getElementById('maxVideos').value) || 10 : undefined;
       const createSchedule = createScheduleCheckbox.checked;
-      const intervalMinutes = createSchedule ? parseInt(intervalMinutesInput.value) || 60 : undefined;
+      const intervalMinutes = createSchedule 
+        ? convertToMinutes(intervalValueInput.value, intervalUnitSelect.value) 
+        : undefined;
 
       if (!url) {
         showMessage('Please enter a YouTube URL, video ID, or channel information', true);
@@ -727,7 +742,7 @@
       }
 
       if (createSchedule && (!intervalMinutes || intervalMinutes < 1)) {
-        showMessage('Please specify a valid check interval (minimum 1 minute)', true);
+        showMessage('Please specify a valid check interval (minimum 1 hour)', true);
         return;
       }
 
@@ -809,16 +824,53 @@
       return date.toLocaleString();
     }
 
-    function formatInterval(minutes) {
-      if (minutes < 60) {
-        return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
-      } else if (minutes < 1440) {
-        const hours = Math.floor(minutes / 60);
-        return `${hours} hour${hours !== 1 ? 's' : ''}`;
-      } else {
-        const days = Math.floor(minutes / 1440);
-        return `${days} day${days !== 1 ? 's' : ''}`;
+    /**
+     * Convert interval value and unit to minutes
+     */
+    function convertToMinutes(value, unit) {
+      const num = parseInt(value) || 1;
+      switch (unit) {
+        case 'hours':
+          return num * 60;
+        case 'days':
+          return num * 60 * 24;
+        case 'weeks':
+          return num * 60 * 24 * 7;
+        case 'months':
+          return num * 60 * 24 * 30; // Approximate: 30 days per month
+        default:
+          return num;
       }
+    }
+
+    /**
+     * Convert minutes to the best unit and return {value, unit}
+     * Always returns one of: hours, days, weeks, months
+     */
+    function convertFromMinutes(minutes) {
+      if (minutes < 1440) { // Less than 1 day
+        const hours = Math.floor(minutes / 60);
+        return { value: Math.max(1, hours), unit: 'hours' };
+      } else if (minutes < 10080) { // Less than 7 days
+        return { value: Math.floor(minutes / 1440), unit: 'days' };
+      } else if (minutes < 43200) { // Less than 30 days
+        return { value: Math.floor(minutes / 10080), unit: 'weeks' };
+      } else {
+        return { value: Math.floor(minutes / 43200), unit: 'months' };
+      }
+    }
+
+    function formatInterval(minutes) {
+      const converted = convertFromMinutes(minutes);
+      const unitLabels = {
+        minutes: 'minute',
+        hours: 'hour',
+        days: 'day',
+        weeks: 'week',
+        months: 'month'
+      };
+      const label = unitLabels[converted.unit] || converted.unit;
+      return `${converted.value} ${label}${converted.value !== 1 ? 's' : ''}`;
     }
 
     function renderSchedule(schedule) {
@@ -928,10 +980,26 @@
           return;
         }
 
+        const convertedInterval = convertFromMinutes(schedule.intervalMinutes);
+        const unitOptions = {
+          hours: '<option value="hours">Hours</option>',
+          days: '<option value="days">Days</option>',
+          weeks: '<option value="weeks">Weeks</option>',
+          months: '<option value="months">Months</option>'
+        };
+        const unitSelectHtml = Object.entries(unitOptions).map(([key, html]) => 
+          html.replace('>', key === convertedInterval.unit ? ' selected>' : '>')
+        ).join('');
+
         editForm.innerHTML = `
           <div class="edit-form-group">
-            <label>Check Interval (minutes)</label>
-            <input type="number" id="edit-interval-${id}" min="1" value="${schedule.intervalMinutes}">
+            <label>Check Interval</label>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <input type="number" id="edit-interval-value-${id}" min="1" value="${convertedInterval.value}" style="flex: 1; padding: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 0.875rem;">
+              <select id="edit-interval-unit-${id}" style="padding: 0.5rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 0.875rem; cursor: pointer;">
+                ${unitSelectHtml}
+              </select>
+            </div>
           </div>
           ${schedule.isChannel ? `
           <div class="edit-form-group">
@@ -969,7 +1037,9 @@
 
     async function saveSchedule(id) {
       try {
-        const intervalMinutes = parseInt(document.getElementById(`edit-interval-${id}`).value);
+        const intervalValue = parseInt(document.getElementById(`edit-interval-value-${id}`).value);
+        const intervalUnit = document.getElementById(`edit-interval-unit-${id}`).value;
+        const intervalMinutes = convertToMinutes(intervalValue, intervalUnit);
         const format = document.getElementById(`edit-format-${id}`).value;
         const audioOnly = format === 'audio';
         const resolution = audioOnly ? undefined : document.getElementById(`edit-resolution-${id}`).value;
