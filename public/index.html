@@ -530,6 +530,15 @@
     </div>
 
     <div id="trackingPage" class="hidden">
+      <div class="card" id="activeDownloadsCard" style="margin-bottom: 2rem;">
+        <h2 style="margin-bottom: 1.5rem; font-size: 1.5rem;">⚡ Active Downloads</h2>
+        <div id="activeDownloadsList">
+          <div style="text-align: center; color: #b4b4b4; padding: 2rem;">
+            Loading active downloads...
+          </div>
+        </div>
+      </div>
+      
       <div class="card">
         <h2 style="margin-bottom: 1.5rem; font-size: 1.5rem;">📊 Download Statistics</h2>
         <div id="statsDisplay" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
@@ -1439,6 +1448,7 @@
         document.getElementById('navDownloads').classList.remove('btn-toggle');
         document.getElementById('navTracking').classList.add('btn-toggle');
         loadTrackingData();
+        loadActiveDownloads();
       }
     }
 
@@ -1472,6 +1482,74 @@
         return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
       }
       return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    // Load active downloads
+    async function loadActiveDownloads() {
+      try {
+        const response = await fetch('/api/downloads/status');
+        const data = await response.json();
+        
+        if (data.success) {
+          renderActiveDownloads(data.downloads || []);
+        }
+      } catch (err) {
+        console.error('Failed to load active downloads:', err);
+      }
+    }
+
+    // Render active downloads
+    function renderActiveDownloads(downloads) {
+      const container = document.getElementById('activeDownloadsList');
+      
+      if (downloads.length === 0) {
+        container.innerHTML = '<div style="text-align: center; color: #b4b4b4; padding: 2rem;">No active downloads</div>';
+        return;
+      }
+      
+      container.innerHTML = downloads.map(download => {
+        const statusColor = {
+          downloading: '#4a9eff',
+          processing: '#ffa502',
+          completed: '#2ed573',
+          failed: '#ff4757'
+        }[download.status] || '#b4b4b4';
+        
+        const progressBar = download.progress !== undefined 
+          ? `<div style="margin-top: 0.5rem;">
+              <div style="background: rgba(0, 0, 0, 0.3); border-radius: 4px; height: 8px; overflow: hidden;">
+                <div style="background: ${statusColor}; height: 100%; width: ${download.progress}%; transition: width 0.3s;"></div>
+              </div>
+              <div style="font-size: 0.75rem; color: #b4b4b4; margin-top: 0.25rem;">${download.progress}%</div>
+            </div>`
+          : '';
+        
+        return `
+          <div class="schedule-item" style="border-left: 3px solid ${statusColor};">
+            <div class="schedule-header">
+              <div class="schedule-info">
+                <div class="schedule-title">
+                  ${download.status === 'downloading' ? '⬇️' : download.status === 'processing' ? '⚙️' : download.status === 'completed' ? '✅' : '❌'} 
+                  ${download.title || download.url}
+                  <span class="schedule-status" style="background: rgba(${statusColor === '#4a9eff' ? '74, 158, 255' : statusColor === '#ffa502' ? '255, 165, 2' : statusColor === '#2ed573' ? '46, 213, 115' : '255, 71, 87'}, 0.2); color: ${statusColor};">
+                    ${download.status.charAt(0).toUpperCase() + download.status.slice(1)}
+                  </span>
+                </div>
+                ${download.channel ? `<div class="schedule-url">Channel: ${download.channel}</div>` : ''}
+                <div class="schedule-url">${download.url}</div>
+                <div class="schedule-details">
+                  <span>Format: ${download.format === 'audio' ? 'Audio (MP3)' : `Video (${download.resolution || 'N/A'}p)`}</span>
+                  <span>Path: ${download.outputPath}</span>
+                  <span>Started: ${formatTime(download.startedAt)}</span>
+                  ${download.completedAt ? `<span>Completed: ${formatTime(download.completedAt)}</span>` : ''}
+                  ${download.error ? `<span style="color: #ff4757;">Error: ${download.error}</span>` : ''}
+                </div>
+                ${progressBar}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
     }
 
     // Load tracking data
@@ -1604,6 +1682,13 @@
     
     // Refresh schedules every 30 seconds
     setInterval(loadSchedules, 30000);
+    
+    // Refresh active downloads every 2 seconds when on tracking page
+    setInterval(() => {
+      if (!document.getElementById('trackingPage').classList.contains('hidden')) {
+        loadActiveDownloads();
+      }
+    }, 2000);
     
     // Initialize navigation buttons
     document.getElementById('navDownloads').classList.add('btn-toggle');

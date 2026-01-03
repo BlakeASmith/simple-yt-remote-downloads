@@ -2,6 +2,7 @@ import { spawn } from "bun";
 import { existsSync, mkdirSync, statSync } from "fs";
 import { join, relative } from "path";
 import { getTracker } from "./tracker";
+import { getDownloadStatusTracker } from "./download-status";
 
 const ARCHIVE_FILE = "/downloads/.archive";
 const DOWNLOADS_ROOT = "/downloads";
@@ -558,6 +559,19 @@ export function startDownload(options: DownloadOptions): DownloadResult {
   console.log(`[${new Date().toISOString()}] Starting download: ${options.url}`);
   console.log(`[${new Date().toISOString()}] Command: yt-dlp ${args.join(" ")}`);
 
+  // Generate download ID
+  const downloadId = `download-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  
+  // Register download status
+  const statusTracker = getDownloadStatusTracker();
+  statusTracker.registerDownload({
+    id: downloadId,
+    url: options.url,
+    outputPath: options.outputPath,
+    format: options.audioOnly ? "audio" : "video",
+    resolution: options.audioOnly ? undefined : options.resolution,
+  });
+
   // Track downloads asynchronously
   (async () => {
     try {
@@ -566,17 +580,52 @@ export function startDownload(options: DownloadOptions): DownloadResult {
         const videoIds = await getPlaylistVideoIds(options.url, options.maxVideos);
         console.log(`[${new Date().toISOString()}] Found ${videoIds.length} videos to track`);
         
+        // Update status with video count
+        statusTracker.updateStatus(downloadId, {
+          progress: 0,
+          status: "downloading",
+        });
+        
         // Track each video (metadata will be fetched as download progresses)
+        let completedCount = 0;
         for (const videoId of videoIds) {
           const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
           extractVideoMetadata(videoUrl)
             .then(metadata => {
               if (metadata) {
+                // Update status with video info
+                if (completedCount === 0) {
+                  statusTracker.updateStatus(downloadId, {
+                    title: metadata.title,
+                    channel: metadata.channel,
+                  });
+                }
+                
                 // Delay tracking to allow download to complete
                 setTimeout(() => {
-                  processDownloadedVideo(metadata.id, videoUrl, options, metadata).catch(err => {
-                    console.error(`[${new Date().toISOString()}] Error tracking video ${videoId}:`, err);
-                  });
+                  processDownloadedVideo(metadata.id, videoUrl, options, metadata)
+                    .then(() => {
+                      completedCount++;
+                      const progress = Math.floor((completedCount / videoIds.length) * 100);
+                      statusTracker.updateStatus(downloadId, { progress });
+                      
+                      if (completedCount >= videoIds.length) {
+                        statusTracker.updateStatus(downloadId, {
+                          status: "completed",
+                          progress: 100,
+                        });
+                      }
+                    })
+                    .catch(err => {
+                      console.error(`[${new Date().toISOString()}] Error tracking video ${videoId}:`, err);
+                      completedCount++;
+                      if (completedCount >= videoIds.length) {
+                        statusTracker.updateStatus(downloadId, {
+                          status: "completed",
+                          progress: 100,
+                        });
+                      }
+                    });
                 }, 5000); // Wait 5 seconds for download to start
               }
             })
@@ -589,16 +638,39 @@ export function startDownload(options: DownloadOptions): DownloadResult {
         const metadata = await extractVideoMetadata(options.url);
         if (metadata) {
           const videoUrl = `https://www.youtube.com/watch?v=${metadata.id}`;
+          
+          // Update status with video info
+          statusTracker.updateStatus(downloadId, {
+            title: metadata.title,
+            channel: metadata.channel,
+            progress: 0,
+          });
+          
           // Delay tracking to allow download to start
           setTimeout(() => {
-            processDownloadedVideo(metadata.id, videoUrl, options, metadata).catch(err => {
-              console.error(`[${new Date().toISOString()}] Error tracking video:`, err);
-            });
+            processDownloadedVideo(metadata.id, videoUrl, options, metadata)
+              .then(() => {
+                statusTracker.updateStatus(downloadId, {
+                  status: "completed",
+                  progress: 100,
+                });
+              })
+              .catch(err => {
+                console.error(`[${new Date().toISOString()}] Error tracking video:`, err);
+                statusTracker.updateStatus(downloadId, {
+                  status: "completed",
+                  progress: 100,
+                });
+              });
           }, 2000);
         }
       }
     } catch (error) {
       console.error(`[${new Date().toISOString()}] Error setting up tracking:`, error);
+      statusTracker.updateStatus(downloadId, {
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   })();
 

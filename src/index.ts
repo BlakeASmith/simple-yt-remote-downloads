@@ -3,6 +3,7 @@ import { startDownload, getPlaylistName, getChannelName } from "./downloader";
 import { getScheduler } from "./scheduler";
 import { getTracker } from "./tracker";
 import { getCollectionsManager } from "./collections";
+import { getDownloadStatusTracker } from "./download-status";
 import { join, resolve } from "path";
 
 const DOWNLOADS_ROOT = "/downloads";
@@ -441,6 +442,20 @@ const server = serve({
         channels,
         playlists,
         stats,
+      });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    // Download status API route
+    if (pathname === "/api/downloads/status" && req.method === "GET") {
+      const statusTracker = getDownloadStatusTracker();
+      const activeDownloads = statusTracker.getActiveDownloads();
+      const response = Response.json({
+        success: true,
+        downloads: activeDownloads,
       });
       Object.entries(corsHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
