@@ -482,6 +482,18 @@ function CollectionsModal(props: {
   const [rootPath, setRootPath] = useState("");
   const [busy, setBusy] = useState(false);
 
+  function suggestedRootPath(n: string) {
+    const trimmed = n.trim();
+    if (!trimmed) return "/downloads/<collection>";
+    // Keep it simple: server will also sanitize, this is just a UX hint.
+    const safe = trimmed
+      .replace(/[\/\\]/g, "-")
+      .replace(/[^a-zA-Z0-9 _.-]/g, "")
+      .trim()
+      .replace(/\s+/g, " ");
+    return `/downloads/${safe || "collection"}`;
+  }
+
   return (
     <Modal open={props.open} title="Collections" onClose={props.onClose}>
       <div className="grid gap-4">
@@ -523,8 +535,18 @@ function CollectionsModal(props: {
               <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Movies" />
             </div>
             <div className="grid gap-2">
-              <div className="text-xs font-semibold text-white/70">Root path (absolute)</div>
-              <Input value={rootPath} onChange={(e) => setRootPath(e.target.value)} placeholder="/downloads/movies" />
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs font-semibold text-white/70">Root path (optional)</div>
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-sky-300 hover:text-sky-200"
+                  onClick={() => setRootPath(suggestedRootPath(name))}
+                >
+                  Use suggested
+                </button>
+              </div>
+              <Input value={rootPath} onChange={(e) => setRootPath(e.target.value)} placeholder={suggestedRootPath(name)} />
+              <div className="text-xs text-white/55">If empty, defaults to {suggestedRootPath(name)}.</div>
             </div>
             <div className="flex items-center justify-end">
               <Button
@@ -532,10 +554,12 @@ function CollectionsModal(props: {
                 onClick={async () => {
                   const n = name.trim();
                   const r = rootPath.trim();
-                  if (!n || !r) return props.showToast("bad", "Name and root path are required.");
+                  if (!n) return props.showToast("bad", "Name is required.");
                   setBusy(true);
                   try {
-                    const res = await apiSend<{ success: boolean; message?: string }>("/api/collections", "POST", { name: n, rootPath: r });
+                    const payload: { name: string; rootPath?: string } = { name: n };
+                    if (r) payload.rootPath = r;
+                    const res = await apiSend<{ success: boolean; message?: string }>("/api/collections", "POST", payload);
                     if (!res.ok) return props.showToast("bad", res.message);
                     props.showToast("good", "Collection created.");
                     setName("");
