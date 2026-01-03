@@ -1107,6 +1107,21 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                               >
                                 {isExpanded ? "Hide details" : "Show details"}
                               </Button>
+                              <Button
+                                variant="danger"
+                                onClick={async () => {
+                                  if (!window.confirm(`Delete "${v.title}"? This will remove all associated files and cannot be undone.`)) return;
+                                  const r = await apiSend<{ success: boolean; message?: string }>(
+                                    `/api/tracker/videos/${encodeURIComponent(v.id)}?relativePath=${encodeURIComponent(v.relativePath)}`,
+                                    "DELETE"
+                                  );
+                                  if (!r.ok) return props.showToast("bad", r.message);
+                                  props.showToast("good", "Video deleted.");
+                                  await loadAll();
+                                }}
+                              >
+                                Delete
+                              </Button>
                             </div>
                           </div>
 

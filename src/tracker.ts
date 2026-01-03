@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import { Database } from "bun:sqlite";
 
 export const TRACKER_DB = "/downloads/.tracker.db";
@@ -586,13 +586,45 @@ class Tracker {
   }
 
   /**
-   * Delete a video from tracking
+   * Delete a video from tracking and remove all associated files from disk
    */
   deleteVideo(videoId: string, relativePath: string): boolean {
+    // Get video info and associated files before deletion
+    const video = this.getVideoStmt.get(videoId, relativePath) as any;
+    if (!video) {
+      return false;
+    }
+
+    // Get all associated files
+    const files = this.getVideoFilesStmt.all(videoId, relativePath) as Array<{
+      path: string;
+      kind: string;
+      intermediate: number;
+      exists: number;
+    }>;
+
+    // Delete all associated files from disk
+    let deletedFiles = 0;
+    for (const file of files) {
+      try {
+        if (file.exists && existsSync(file.path)) {
+          rmSync(file.path, { force: true });
+          deletedFiles++;
+        }
+      } catch (error) {
+        // Log but continue - don't fail deletion if a file can't be deleted
+        console.error(`[${new Date().toISOString()}] Failed to delete file ${file.path}:`, error);
+      }
+    }
+
+    // Delete video from database (cascades to tracked_files via foreign key)
     const deleteVideoStmt = this.db.prepare(`
       DELETE FROM videos WHERE id = ? AND relativePath = ?
     `);
     const result = deleteVideoStmt.run(videoId, relativePath);
+    
+    console.log(`[${new Date().toISOString()}] Deleted video ${videoId} (${relativePath}): ${deletedFiles} files removed`);
+    
     return result.changes > 0;
   }
 

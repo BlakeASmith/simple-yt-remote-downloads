@@ -502,6 +502,54 @@ const server = serve({
       return response;
     }
 
+    // Delete video: DELETE /api/tracker/videos/:videoId?relativePath=...
+    const videoDeleteMatch = pathname.match(/^\/api\/tracker\/videos\/([^\/]+)$/);
+    if (videoDeleteMatch && req.method === "DELETE") {
+      try {
+        const videoId = videoDeleteMatch[1];
+        const relativePath = url.searchParams.get("relativePath");
+        if (!relativePath) {
+          const response = Response.json(
+            { success: false, message: "Missing required parameter: relativePath" },
+            { status: 400 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+        const tracker = getTracker();
+        const deleted = tracker.deleteVideo(videoId, relativePath);
+
+        if (!deleted) {
+          const response = Response.json(
+            { success: false, message: "Video not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const response = Response.json({ success: true, message: "Video deleted" });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err: any) {
+        console.error("Error deleting video:", err);
+        const response = Response.json(
+          { success: false, message: err?.message || "Failed to delete video" },
+          { status: 500 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
     // Collections API routes
     if (pathname === "/api/collections" && req.method === "GET") {
       const collectionsManager = getCollectionsManager();
