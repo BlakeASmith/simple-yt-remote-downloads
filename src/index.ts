@@ -2,7 +2,8 @@ import { serve, file } from "bun";
 import { startDownload, getPlaylistName, getChannelName } from "./downloader";
 import { getScheduler } from "./scheduler";
 import { getTracker } from "./tracker";
-import { join } from "path";
+import { getCollectionsManager } from "./collections";
+import { join, resolve } from "path";
 
 const DOWNLOADS_ROOT = "/downloads";
 const PORT = parseInt(process.env.PORT || "80", 10);
@@ -10,6 +11,7 @@ const PORT = parseInt(process.env.PORT || "80", 10);
 interface DownloadRequest {
   url: string;
   path?: string;
+  collectionId?: string;
   audioOnly?: boolean;
   resolution?: "1080" | "720";
   isPlaylist?: boolean;
@@ -88,6 +90,20 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       );
     }
 
+    // Get collection if specified
+    let collectionRoot: string | null = null;
+    if (body.collectionId) {
+      const collectionsManager = getCollectionsManager();
+      const collection = collectionsManager.getCollection(body.collectionId);
+      if (!collection) {
+        return Response.json(
+          { success: false, message: "Collection not found" },
+          { status: 400 }
+        );
+      }
+      collectionRoot = collection.rootPath;
+    }
+
     // Resolve download path
     let relativePath = body.path || "";
     
@@ -109,13 +125,16 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       }
     }
 
-    // Resolve output path relative to downloads root
-    const outputPath = join(DOWNLOADS_ROOT, relativePath);
+    // Resolve output path relative to collection root or downloads root
+    const basePath = collectionRoot || DOWNLOADS_ROOT;
+    const outputPath = join(basePath, relativePath);
 
-    // Validate path doesn't escape downloads root
-    if (!outputPath.startsWith(DOWNLOADS_ROOT)) {
+    // Validate path doesn't escape base path
+    const resolvedBasePath = resolve(basePath);
+    const resolvedOutputPath = resolve(outputPath);
+    if (!resolvedOutputPath.startsWith(resolvedBasePath)) {
       return Response.json(
-        { success: false, message: "Invalid path: must be within downloads root" },
+        { success: false, message: "Invalid path: must be within base directory" },
         { status: 400 }
       );
     }
@@ -212,7 +231,7 @@ const server = serve({
     if (pathname === "/api/schedules" && req.method === "POST") {
       try {
         const body = await req.json();
-        const { url, path, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes, includeThumbnail, includeTranscript } = body;
+        const { url, path, collectionId, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes, includeThumbnail, includeTranscript } = body;
 
         if (!url || !intervalMinutes || intervalMinutes < 1) {
           const response = Response.json(
@@ -223,6 +242,22 @@ const server = serve({
             response.headers.set(key, value);
           });
           return response;
+        }
+
+        // Validate collection if specified
+        if (collectionId) {
+          const collectionsManager = getCollectionsManager();
+          const collection = collectionsManager.getCollection(collectionId);
+          if (!collection) {
+            const response = Response.json(
+              { success: false, message: "Collection not found" },
+              { status: 400 }
+            );
+            Object.entries(corsHeaders).forEach(([key, value]) => {
+              response.headers.set(key, value);
+            });
+            return response;
+          }
         }
 
         // Resolve path if not provided
@@ -253,6 +288,7 @@ const server = serve({
         const schedule = scheduler.createSchedule({
           url,
           path: relativePath,
+          collectionId,
           audioOnly: audioOnly || false,
           resolution: resolution || "1080",
           isPlaylist: isPlaylist || false,
@@ -399,6 +435,126 @@ const server = serve({
         playlists,
         stats,
       });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    // Collections API routes
+    if (pathname === "/api/collections" && req.method === "GET") {
+      const collectionsManager = getCollectionsManager();
+      const collections = collectionsManager.getAllCollections();
+      const response = Response.json({ success: true, collections });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    if (pathname === "/api/collections" && req.method === "POST") {
+      try {
+        const body = await req.json();
+        const { name, rootPath } = body;
+
+        if (!name || !rootPath) {
+          const response = Response.json(
+            { success: false, message: "Missing required fields: name and rootPath" },
+            { status: 400 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const collectionsManager = getCollectionsManager();
+        const collection = collectionsManager.createCollection({
+          name,
+          rootPath: resolve(rootPath), // Resolve to absolute path
+        });
+
+        const response = Response.json({ success: true, collection });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err) {
+        console.error("Error creating collection:", err);
+        const response = Response.json(
+          { success: false, message: "Invalid request body" },
+          { status: 400 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
+    // Update collection: PUT /api/collections/:id
+    const collectionUpdateMatch = pathname.match(/^\/api\/collections\/([^\/]+)$/);
+    if (collectionUpdateMatch && req.method === "PUT") {
+      try {
+        const collectionId = collectionUpdateMatch[1];
+        const body = await req.json();
+        const collectionsManager = getCollectionsManager();
+        
+        // Resolve rootPath if provided
+        if (body.rootPath) {
+          body.rootPath = resolve(body.rootPath);
+        }
+        
+        const updated = collectionsManager.updateCollection(collectionId, body);
+
+        if (!updated) {
+          const response = Response.json(
+            { success: false, message: "Collection not found" },
+            { status: 404 }
+          );
+          Object.entries(corsHeaders).forEach(([key, value]) => {
+            response.headers.set(key, value);
+          });
+          return response;
+        }
+
+        const response = Response.json({ success: true, collection: updated });
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      } catch (err) {
+        console.error("Error updating collection:", err);
+        const response = Response.json(
+          { success: false, message: "Invalid request body" },
+          { status: 400 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+    }
+
+    // Delete collection: DELETE /api/collections/:id
+    const collectionDeleteMatch = pathname.match(/^\/api\/collections\/([^\/]+)$/);
+    if (collectionDeleteMatch && req.method === "DELETE") {
+      const collectionId = collectionDeleteMatch[1];
+      const collectionsManager = getCollectionsManager();
+      const deleted = collectionsManager.deleteCollection(collectionId);
+
+      if (!deleted) {
+        const response = Response.json(
+          { success: false, message: "Collection not found" },
+          { status: 404 }
+        );
+        Object.entries(corsHeaders).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        return response;
+      }
+
+      const response = Response.json({ success: true, message: "Collection deleted" });
       Object.entries(corsHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
       });
