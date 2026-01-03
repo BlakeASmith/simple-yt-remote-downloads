@@ -172,14 +172,37 @@
     <div class="card">
       <form id="downloadForm">
         <div class="form-group">
-          <label for="url">YouTube URL or Video ID</label>
+          <label for="url" id="urlLabel">YouTube URL, Video ID, Channel ID, or Channel URL</label>
           <input 
             type="text" 
             id="url" 
             name="url" 
-            placeholder="https://www.youtube.com/watch?v=..."
+            placeholder="https://www.youtube.com/watch?v=... or @channelname or channel/UCxxxxx"
             required
           >
+        </div>
+
+        <div class="form-group" id="channelGroup">
+          <label class="checkbox-option">
+            <input type="checkbox" id="isChannel" name="isChannel">
+            <span>Download from Channel</span>
+          </label>
+          <div id="channelOptions" class="hidden" style="margin-top: 1rem; padding: 1rem; background: rgba(0, 0, 0, 0.2); border-radius: 8px;">
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label for="maxVideos">Number of newest videos to download</label>
+              <input 
+                type="number" 
+                id="maxVideos" 
+                name="maxVideos" 
+                min="1" 
+                value="10"
+                style="width: 100%; padding: 0.875rem 1rem; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: rgba(0, 0, 0, 0.3); color: #fff; font-size: 1rem;"
+              >
+            </div>
+            <div style="font-size: 0.875rem; color: #b4b4b4; margin-top: 0.5rem;">
+              Videos will be stored in a folder named after the channel (or use custom name below)
+            </div>
+          </div>
         </div>
 
         <div class="form-group">
@@ -188,7 +211,7 @@
             type="text" 
             id="path" 
             name="path" 
-            placeholder="e.g., movies/comedy"
+            placeholder="e.g., movies/comedy (or leave empty to use channel/playlist name)"
           >
         </div>
 
@@ -247,8 +270,11 @@
     const resolutionGroup = document.getElementById('resolutionGroup');
     const formatRadios = document.querySelectorAll('input[name="format"]');
     const urlInput = document.getElementById('url');
+    const urlLabel = document.getElementById('urlLabel');
     const playlistCheckbox = document.getElementById('isPlaylist');
     const playlistDetected = document.getElementById('playlistDetected');
+    const channelCheckbox = document.getElementById('isChannel');
+    const channelOptions = document.getElementById('channelOptions');
     const pathInput = document.getElementById('path');
     const pathLabel = document.getElementById('pathLabel');
 
@@ -316,6 +342,12 @@
 
     // Track manual checkbox changes
     playlistCheckbox.addEventListener('change', (e) => {
+      // Don't allow both playlist and channel to be checked
+      if (e.target.checked && channelCheckbox.checked) {
+        channelCheckbox.checked = false;
+        channelOptions.classList.add('hidden');
+      }
+      
       if (e.target.checked && !isPlaylistURL(urlInput.value.trim())) {
         e.target.setAttribute('data-manually-checked', 'true');
         playlistDetected.classList.add('hidden');
@@ -334,6 +366,28 @@
         playlistDetected.classList.remove('hidden');
         pathLabel.textContent = 'Download Path (optional - will use playlist name if empty)';
         pathInput.required = false;
+      }
+    });
+
+    // Handle channel checkbox changes
+    channelCheckbox.addEventListener('change', (e) => {
+      // Don't allow both playlist and channel to be checked
+      if (e.target.checked && playlistCheckbox.checked) {
+        playlistCheckbox.checked = false;
+        playlistDetected.classList.add('hidden');
+        playlistCheckbox.removeAttribute('data-manually-checked');
+      }
+      
+      if (e.target.checked) {
+        channelOptions.classList.remove('hidden');
+        pathLabel.textContent = 'Download Path (optional - will use channel name if empty)';
+        urlLabel.textContent = 'Channel URL, Channel ID, or Channel Handle';
+        urlInput.placeholder = '@channelname or https://www.youtube.com/channel/UCxxxxx or https://www.youtube.com/@channelname';
+      } else {
+        channelOptions.classList.add('hidden');
+        pathLabel.textContent = 'Download Path (optional, relative to downloads root)';
+        urlLabel.textContent = 'YouTube URL, Video ID, Channel ID, or Channel URL';
+        urlInput.placeholder = 'https://www.youtube.com/watch?v=... or @channelname or channel/UCxxxxx';
       }
     });
 
@@ -361,13 +415,20 @@
       const format = document.querySelector('input[name="format"]:checked').value;
       const resolution = document.querySelector('input[name="resolution"]:checked').value;
       const isPlaylist = document.getElementById('isPlaylist').checked;
+      const isChannel = document.getElementById('isChannel').checked;
+      const maxVideos = isChannel ? parseInt(document.getElementById('maxVideos').value) || 10 : undefined;
 
       if (!url) {
-        showMessage('Please enter a YouTube URL', true);
+        showMessage('Please enter a YouTube URL, video ID, or channel information', true);
         return;
       }
 
-      // Path is optional for playlists - will use playlist name as default
+      if (isChannel && (!maxVideos || maxVideos < 1)) {
+        showMessage('Please specify a valid number of videos to download', true);
+        return;
+      }
+
+      // Path is optional for playlists and channels - will use name as default
 
       submitBtn.disabled = true;
       submitBtn.textContent = 'Starting...';
@@ -385,6 +446,8 @@
             audioOnly: format === 'audio',
             resolution,
             isPlaylist,
+            isChannel,
+            maxVideos,
           }),
         });
 
