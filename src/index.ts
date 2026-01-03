@@ -15,6 +15,8 @@ interface DownloadRequest {
   isPlaylist?: boolean;
   isChannel?: boolean;
   maxVideos?: number;
+  includeThumbnail?: boolean;
+  includeTranscript?: boolean;
 }
 
 /**
@@ -126,6 +128,8 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       isPlaylist: body.isPlaylist || false,
       isChannel: body.isChannel || false,
       maxVideos: body.maxVideos,
+      includeThumbnail: body.includeThumbnail,
+      includeTranscript: body.includeTranscript,
     });
 
     return Response.json(result, { status: 202 });
@@ -208,7 +212,7 @@ const server = serve({
     if (pathname === "/api/schedules" && req.method === "POST") {
       try {
         const body = await req.json();
-        const { url, path, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes } = body;
+        const { url, path, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes, includeThumbnail, includeTranscript } = body;
 
         if (!url || !intervalMinutes || intervalMinutes < 1) {
           const response = Response.json(
@@ -256,6 +260,8 @@ const server = serve({
           maxVideos,
           intervalMinutes,
           enabled: true,
+          includeThumbnail,
+          includeTranscript,
         });
 
         const response = Response.json({ success: true, schedule });

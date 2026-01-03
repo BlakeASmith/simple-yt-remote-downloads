@@ -14,6 +14,8 @@ export interface DownloadOptions {
   isPlaylist?: boolean;
   isChannel?: boolean;
   maxVideos?: number;
+  includeThumbnail?: boolean;
+  includeTranscript?: boolean;
 }
 
 export interface DownloadResult {
@@ -328,7 +330,15 @@ async function getPlaylistVideoIds(url: string, maxVideos?: number): Promise<str
  * Build yt-dlp arguments based on download options
  */
 function buildYtDlpArgs(options: DownloadOptions): string[] {
-  const { url, outputPath, audioOnly, resolution, isPlaylist, isChannel, maxVideos } = options;
+  const { url, outputPath, audioOnly, resolution, isPlaylist, isChannel, maxVideos, includeThumbnail, includeTranscript } = options;
+
+  // Set defaults: video includes thumbnail and transcript, audio only does not
+  const shouldIncludeThumbnail = includeThumbnail !== undefined 
+    ? includeThumbnail 
+    : !audioOnly;
+  const shouldIncludeTranscript = includeTranscript !== undefined 
+    ? includeTranscript 
+    : !audioOnly;
 
   // Ensure output path is normalized (no trailing slash)
   // For playlists and channels, all videos go directly to this folder without subdirectories
@@ -344,14 +354,21 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
     outputTemplate,
     "--download-archive",
     ARCHIVE_FILE,
-    "--write-thumbnail",
-    "--write-subs",
-    "--write-auto-subs",
-    "--sub-langs",
-    "en.*,en",
-    "--embed-thumbnail",
     "--restrict-filenames",
   ];
+
+  // Add thumbnail options if requested
+  if (shouldIncludeThumbnail) {
+    args.push("--write-thumbnail");
+    if (!audioOnly) {
+      args.push("--embed-thumbnail");
+    }
+  }
+
+  // Add transcript/subtitle options if requested
+  if (shouldIncludeTranscript) {
+    args.push("--write-subs", "--write-auto-subs", "--sub-langs", "en.*,en");
+  }
 
   // For channels, limit the number of videos
   if (isChannel && maxVideos && maxVideos > 0) {
@@ -383,10 +400,13 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
     args.push(
       "--format",
       formatStr,
-      "--embed-subs",
       "--merge-output-format",
       "mkv"
     );
+    // Embed subs only if transcript is requested and we're downloading video
+    if (shouldIncludeTranscript) {
+      args.push("--embed-subs");
+    }
   }
 
   return args;

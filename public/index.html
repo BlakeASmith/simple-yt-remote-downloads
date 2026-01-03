@@ -401,6 +401,22 @@
           </div>
         </div>
 
+        <div class="form-group options">
+          <div class="option-group">
+            <label>Additional Options</label>
+            <div class="radio-group">
+              <label class="checkbox-option">
+                <input type="checkbox" id="includeThumbnail" name="includeThumbnail" checked>
+                <span>Include Thumbnail</span>
+              </label>
+              <label class="checkbox-option">
+                <input type="checkbox" id="includeTranscript" name="includeTranscript" checked>
+                <span>Include Transcript</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="form-group" id="scheduleGroup" style="margin-top: 1.5rem; padding: 1rem; background: rgba(0, 0, 0, 0.2); border-radius: 8px;">
           <label class="checkbox-option">
             <input type="checkbox" id="createSchedule" name="createSchedule">
@@ -731,13 +747,20 @@
       }
     });
 
-    // Toggle resolution visibility based on format selection
+    const includeThumbnailCheckbox = document.getElementById('includeThumbnail');
+    const includeTranscriptCheckbox = document.getElementById('includeTranscript');
+
+    // Toggle resolution visibility and default thumbnail/transcript based on format selection
     formatRadios.forEach(radio => {
       radio.addEventListener('change', (e) => {
-        resolutionGroup.style.opacity = e.target.value === 'audio' ? '0.5' : '1';
+        const isAudio = e.target.value === 'audio';
+        resolutionGroup.style.opacity = isAudio ? '0.5' : '1';
         resolutionGroup.querySelectorAll('input').forEach(input => {
-          input.disabled = e.target.value === 'audio';
+          input.disabled = isAudio;
         });
+        // Set defaults: video includes both, audio excludes both
+        includeThumbnailCheckbox.checked = !isAudio;
+        includeTranscriptCheckbox.checked = !isAudio;
       });
     });
 
@@ -770,6 +793,8 @@
       const intervalMinutes = createSchedule 
         ? convertToMinutes(intervalValueInput.value, intervalUnitSelect.value) 
         : undefined;
+      const includeThumbnail = includeThumbnailCheckbox.checked;
+      const includeTranscript = includeTranscriptCheckbox.checked;
 
       if (!url) {
         showMessage('Please enter a YouTube URL, video ID, or channel information', true);
@@ -810,6 +835,8 @@
             isPlaylist,
             isChannel,
             maxVideos,
+            includeThumbnail,
+            includeTranscript,
           }),
         });
 
@@ -832,6 +859,8 @@
                 isChannel,
                 maxVideos,
                 intervalMinutes,
+                includeThumbnail,
+                includeTranscript,
               }),
             });
 
@@ -939,6 +968,8 @@
               <span>Path: ${schedule.path || 'auto'}</span>
               <span>Format: ${schedule.audioOnly ? 'Audio (MP3)' : `Video (${schedule.resolution}p)`}</span>
               ${schedule.isChannel && schedule.maxVideos ? `<span>Max videos: ${schedule.maxVideos}</span>` : ''}
+              <span>Thumbnail: ${(schedule.includeThumbnail === undefined ? !schedule.audioOnly : schedule.includeThumbnail) ? 'Yes' : 'No'}</span>
+              <span>Transcript: ${(schedule.includeTranscript === undefined ? !schedule.audioOnly : schedule.includeTranscript) ? 'Yes' : 'No'}</span>
               <span>Interval: ${formatInterval(schedule.intervalMinutes)}</span>
               <span>Next run: ${formatTime(schedule.nextRun)}</span>
               ${schedule.lastRun ? `<span>Last run: ${formatTime(schedule.lastRun)}</span>` : ''}
@@ -1068,6 +1099,19 @@
             </select>
           </div>
           ` : ''}
+          <div class="edit-form-group">
+            <label>Additional Options</label>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+              <label class="checkbox-option" style="cursor: pointer;">
+                <input type="checkbox" id="edit-includeThumbnail-${id}" ${(schedule.includeThumbnail === undefined ? !schedule.audioOnly : schedule.includeThumbnail) ? 'checked' : ''}>
+                <span>Include Thumbnail</span>
+              </label>
+              <label class="checkbox-option" style="cursor: pointer;">
+                <input type="checkbox" id="edit-includeTranscript-${id}" ${(schedule.includeTranscript === undefined ? !schedule.audioOnly : schedule.includeTranscript) ? 'checked' : ''}>
+                <span>Include Transcript</span>
+              </label>
+            </div>
+          </div>
           <div class="edit-form-actions">
             <button class="btn-small btn-edit" onclick="saveSchedule('${id}')">Save</button>
             <button class="btn-small btn-delete" onclick="cancelEdit('${id}')">Cancel</button>
@@ -1091,11 +1135,15 @@
         const maxVideos = document.getElementById(`edit-maxVideos-${id}`) 
           ? parseInt(document.getElementById(`edit-maxVideos-${id}`).value) 
           : undefined;
+        const includeThumbnail = document.getElementById(`edit-includeThumbnail-${id}`).checked;
+        const includeTranscript = document.getElementById(`edit-includeTranscript-${id}`).checked;
 
         const updateData = {
           intervalMinutes,
           audioOnly,
           resolution,
+          includeThumbnail,
+          includeTranscript,
         };
 
         if (maxVideos !== undefined) {
