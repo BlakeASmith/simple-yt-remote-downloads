@@ -2,6 +2,23 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 
 export const TRACKER_FILE = "/downloads/.tracker.json";
 
+export type TrackedFileKind = "media" | "thumbnail" | "subtitle" | "intermediate" | "other";
+
+export interface TrackedFile {
+  /** Absolute filesystem path */
+  path: string;
+  /** Best-effort classification for future media management */
+  kind: TrackedFileKind;
+  /** True for temporary / intermediate artifacts (fragments, .part, format-specific files, etc.) */
+  intermediate: boolean;
+  /** Whether the file currently exists on disk (best-effort) */
+  exists: boolean;
+  /** When we first observed this file (timestamp) */
+  firstSeenAt: number;
+  /** When we observed it being deleted (timestamp) */
+  deletedAt?: number;
+}
+
 export interface TrackedVideo {
   id: string; // YouTube video ID
   title: string;
@@ -15,6 +32,12 @@ export interface TrackedVideo {
   resolution?: "1080" | "720";
   fileSize?: number; // bytes
   duration?: number; // seconds
+  /**
+   * All associated files for this video (media, thumbnails, subtitles, intermediates, etc.).
+   * This drives future media management features.
+   */
+  files: TrackedFile[];
+  /** @deprecated Prefer `files` */
   thumbnailPath?: string;
   deleted?: boolean; // Track if file was deleted
   deletedAt?: number; // timestamp when deleted
@@ -106,7 +129,7 @@ class Tracker {
   /**
    * Track a downloaded video
    */
-  trackVideo(video: Omit<TrackedVideo, "id" | "downloadedAt">): TrackedVideo {
+  trackVideo(video: Omit<TrackedVideo, "downloadedAt">): TrackedVideo {
     const trackedVideo: TrackedVideo = {
       ...video,
       id: video.id, // Use YouTube video ID as the ID
@@ -118,12 +141,38 @@ class Tracker {
     if (existingIndex >= 0) {
       // Update existing video, preserve deleted status if it was deleted
       const existing = this.data.videos[existingIndex];
+
+      // Merge files by path to retain intermediates + deletion state.
+      const mergedFilesByPath = new Map<string, TrackedFile>();
+      for (const f of (existing.files || [])) mergedFilesByPath.set(f.path, f);
+      for (const f of (trackedVideo.files || [])) {
+        const prev = mergedFilesByPath.get(f.path);
+        if (!prev) {
+          mergedFilesByPath.set(f.path, f);
+          continue;
+        }
+        mergedFilesByPath.set(f.path, {
+          ...prev,
+          ...f,
+          // Preserve firstSeenAt if we had it.
+          firstSeenAt: prev.firstSeenAt || f.firstSeenAt,
+          // If we ever saw a deletion timestamp, keep the earliest deletion time.
+          deletedAt: prev.deletedAt ?? f.deletedAt,
+          // Preserve classification if new one is "other" but previous was more specific.
+          kind: f.kind === "other" && prev.kind !== "other" ? prev.kind : f.kind,
+          intermediate: prev.intermediate || f.intermediate,
+        });
+      }
+
       this.data.videos[existingIndex] = {
         ...trackedVideo,
+        files: Array.from(mergedFilesByPath.values()),
         deleted: existing.deleted,
         deletedAt: existing.deletedAt,
       };
     } else {
+      // Ensure new videos always have a files array.
+      if (!trackedVideo.files) trackedVideo.files = [];
       this.data.videos.push(trackedVideo);
     }
 
