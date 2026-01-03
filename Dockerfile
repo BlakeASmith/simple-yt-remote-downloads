@@ -27,6 +27,7 @@ FROM debian:bookworm-slim
 # ffmpeg is required for merging video/audio streams
 # cron for scheduled downloads
 # curl and unzip for installing Bun
+# nodejs for yt-dlp JavaScript runtime support
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
@@ -35,9 +36,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
     curl \
     unzip \
+    nodejs \
+    npm \
     && pip3 install --break-system-packages yt-dlp \
     && curl -fsSL https://bun.sh/install | bash \
     && mv /root/.bun/bin/bun /usr/local/bin/bun \
+    && ln -sf /usr/bin/nodejs /usr/local/bin/node \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

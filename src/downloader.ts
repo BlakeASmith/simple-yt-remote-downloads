@@ -8,6 +8,14 @@ import type { TrackedFile, TrackedFileKind } from "./tracker";
 const ARCHIVE_FILE = "/downloads/.archive";
 const DOWNLOADS_ROOT = "/downloads";
 
+/**
+ * Get JavaScript runtime flag for yt-dlp
+ * Configures yt-dlp to use Node.js as the JS runtime
+ */
+function getJsRuntimeFlag(): string[] {
+  return ["--js-runtimes", "node"];
+}
+
 export interface DownloadOptions {
   url: string;
   outputPath: string;
@@ -119,7 +127,7 @@ export async function getChannelName(channelInput: string): Promise<string | nul
     const isVideo = isVideoUrl(channelUrl);
     
     // Build yt-dlp command - use --no-playlist for videos, --flat-playlist for channels
-    const cmd = ["yt-dlp", channelUrl, "--print", "%(channel)s", "--no-warnings"];
+    const cmd = ["yt-dlp", ...getJsRuntimeFlag(), channelUrl, "--print", "%(channel)s", "--no-warnings"];
     if (isVideo) {
       cmd.push("--no-playlist");
     } else {
@@ -169,7 +177,7 @@ export async function getPlaylistName(url: string): Promise<string | null> {
     console.log(`[${new Date().toISOString()}] Attempting to get playlist name from: ${url}`);
     // Use yt-dlp to extract playlist title
     const proc = Bun.spawn({
-      cmd: ["yt-dlp", url, "--print", "%(playlist_title)s", "--flat-playlist", "--no-warnings"],
+      cmd: ["yt-dlp", ...getJsRuntimeFlag(), url, "--print", "%(playlist_title)s", "--flat-playlist", "--no-warnings"],
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -269,6 +277,7 @@ async function extractVideoMetadata(url: string): Promise<{
     const proc = Bun.spawn({
       cmd: [
         "yt-dlp",
+        ...getJsRuntimeFlag(),
         url,
         "--dump-json",
         "--no-warnings",
@@ -308,6 +317,7 @@ async function getPlaylistVideoIds(url: string, maxVideos?: number): Promise<str
   try {
     const cmd = [
       "yt-dlp",
+      ...getJsRuntimeFlag(),
       url,
       "--flat-playlist",
       "--print", "%(id)s",
@@ -391,6 +401,7 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
   const finalUrl = isChannel ? buildChannelUrl(url) : url;
 
   const args: string[] = [
+    ...getJsRuntimeFlag(),
     finalUrl,
     "--output",
     outputTemplate,
