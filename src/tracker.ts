@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
+import { Database } from "bun:sqlite";
 
-export const TRACKER_FILE = "/downloads/.tracker.json";
+export const TRACKER_DB = "/downloads/.tracker.db";
 
 export type TrackedFileKind = "media" | "thumbnail" | "subtitle" | "intermediate" | "other";
 
@@ -72,102 +73,123 @@ export interface TrackedPlaylist {
   videoIds: string[]; // List of video IDs downloaded
 }
 
-export interface TrackerData {
-  videos: TrackedVideo[];
-  channels: TrackedChannel[];
-  playlists: TrackedPlaylist[];
-  lastUpdated: number;
-}
-
 /**
- * Load tracker data from disk
+ * Initialize the tracker database
  */
-export function loadTrackerData(): TrackerData {
-  try {
-    if (existsSync(TRACKER_FILE)) {
-      const data = readFileSync(TRACKER_FILE, "utf-8");
-      const parsed = JSON.parse(data) as TrackerData;
-      // Backward-compatible normalization for older tracker formats.
-      if (parsed?.videos?.length) {
-        const now = Date.now();
-        parsed.videos = parsed.videos.map((v: any) => {
-          const files: TrackedFile[] = Array.isArray(v.files) ? v.files : [];
-          if (!Array.isArray(v.files)) {
-            // Best-effort seed from legacy fields.
-            if (typeof v.fullPath === "string" && v.fullPath) {
-              files.push({
-                path: v.fullPath,
-                kind: "media",
-                intermediate: false,
-                exists: true,
-                hidden: false,
-                firstSeenAt: now,
-              });
-            }
-            if (typeof v.thumbnailPath === "string" && v.thumbnailPath) {
-              files.push({
-                path: v.thumbnailPath,
-                kind: "thumbnail",
-                intermediate: false,
-                exists: true,
-                hidden: false,
-                firstSeenAt: now,
-              });
-            }
-          }
-          // Ensure file entries have required fields.
-          const normalizedFiles = files.map((f: any) => {
-            const intermediate = !!f.intermediate;
-            const exists = typeof f.exists === "boolean" ? f.exists : true;
-            const hidden = typeof f.hidden === "boolean" ? f.hidden : intermediate && !exists;
-            return {
-              path: String(f.path || ""),
-              kind: (f.kind as TrackedFileKind) || "other",
-              intermediate,
-              exists,
-              hidden,
-              firstSeenAt: typeof f.firstSeenAt === "number" ? f.firstSeenAt : now,
-              deletedAt: typeof f.deletedAt === "number" ? f.deletedAt : undefined,
-            } satisfies TrackedFile;
-          }).filter((f: TrackedFile) => !!f.path);
-
-          return { ...v, files: normalizedFiles } as TrackedVideo;
-        });
-      } else if (parsed && !parsed.videos) {
-        // Very old format fallback
-        (parsed as any).videos = [];
-      }
-      if (!parsed.channels) parsed.channels = [];
-      if (!parsed.playlists) parsed.playlists = [];
-      if (!parsed.lastUpdated) parsed.lastUpdated = Date.now();
-      return parsed;
-    }
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error loading tracker data:`, error);
+function initTrackerDatabase(): Database {
+  // Ensure downloads directory exists
+  const downloadsDir = TRACKER_DB.substring(0, TRACKER_DB.lastIndexOf("/"));
+  if (!existsSync(downloadsDir)) {
+    mkdirSync(downloadsDir, { recursive: true });
   }
-  return {
-    videos: [],
-    channels: [],
-    playlists: [],
-    lastUpdated: Date.now(),
-  };
-}
 
-/**
- * Save tracker data to disk
- */
-export function saveTrackerData(data: TrackerData): void {
-  try {
-    // Ensure downloads directory exists
-    const downloadsDir = TRACKER_FILE.substring(0, TRACKER_FILE.lastIndexOf("/"));
-    if (!existsSync(downloadsDir)) {
-      mkdirSync(downloadsDir, { recursive: true });
-    }
-    data.lastUpdated = Date.now();
-    writeFileSync(TRACKER_FILE, JSON.stringify(data, null, 2), "utf-8");
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error saving tracker data:`, error);
-  }
+  const db = new Database(TRACKER_DB);
+  
+  // Enable foreign keys
+  db.exec("PRAGMA foreign_keys = ON");
+  
+  // Create videos table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS videos (
+      id TEXT NOT NULL,
+      relativePath TEXT NOT NULL,
+      title TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      channelId TEXT,
+      url TEXT NOT NULL,
+      fullPath TEXT NOT NULL,
+      downloadedAt INTEGER NOT NULL,
+      format TEXT NOT NULL,
+      resolution TEXT,
+      fileSize INTEGER,
+      duration REAL,
+      ytdlpCommand TEXT,
+      deleted INTEGER DEFAULT 0,
+      deletedAt INTEGER,
+      PRIMARY KEY (id, relativePath)
+    )
+  `);
+
+  // Create tracked_files table (one-to-many with videos)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS tracked_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      videoId TEXT NOT NULL,
+      videoRelativePath TEXT NOT NULL,
+      path TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      intermediate INTEGER DEFAULT 0,
+      exists INTEGER DEFAULT 1,
+      hidden INTEGER DEFAULT 0,
+      firstSeenAt INTEGER NOT NULL,
+      deletedAt INTEGER,
+      FOREIGN KEY (videoId, videoRelativePath) REFERENCES videos(id, relativePath) ON DELETE CASCADE
+    )
+  `);
+
+  // Create channels table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS channels (
+      id TEXT PRIMARY KEY,
+      channelName TEXT NOT NULL,
+      channelId TEXT,
+      url TEXT NOT NULL,
+      relativePath TEXT NOT NULL,
+      downloadedAt INTEGER NOT NULL,
+      lastDownloadedAt INTEGER,
+      videoCount INTEGER DEFAULT 0,
+      maxVideos INTEGER
+    )
+  `);
+
+  // Create channel_videos junction table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS channel_videos (
+      channelId TEXT NOT NULL,
+      videoId TEXT NOT NULL,
+      videoRelativePath TEXT NOT NULL,
+      PRIMARY KEY (channelId, videoId, videoRelativePath),
+      FOREIGN KEY (channelId) REFERENCES channels(id) ON DELETE CASCADE,
+      FOREIGN KEY (videoId, videoRelativePath) REFERENCES videos(id, relativePath) ON DELETE CASCADE
+    )
+  `);
+
+  // Create playlists table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS playlists (
+      id TEXT PRIMARY KEY,
+      playlistName TEXT NOT NULL,
+      playlistId TEXT,
+      url TEXT NOT NULL,
+      relativePath TEXT NOT NULL,
+      downloadedAt INTEGER NOT NULL,
+      lastDownloadedAt INTEGER,
+      videoCount INTEGER DEFAULT 0
+    )
+  `);
+
+  // Create playlist_videos junction table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS playlist_videos (
+      playlistId TEXT NOT NULL,
+      videoId TEXT NOT NULL,
+      videoRelativePath TEXT NOT NULL,
+      PRIMARY KEY (playlistId, videoId, videoRelativePath),
+      FOREIGN KEY (playlistId) REFERENCES playlists(id) ON DELETE CASCADE,
+      FOREIGN KEY (videoId, videoRelativePath) REFERENCES videos(id, relativePath) ON DELETE CASCADE
+    )
+  `);
+
+  // Create indexes for better query performance
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_videos_channel ON videos(channelId);
+    CREATE INDEX IF NOT EXISTS idx_videos_deleted ON videos(deleted);
+    CREATE INDEX IF NOT EXISTS idx_tracked_files_video ON tracked_files(videoId, videoRelativePath);
+    CREATE INDEX IF NOT EXISTS idx_channel_videos_channel ON channel_videos(channelId);
+    CREATE INDEX IF NOT EXISTS idx_playlist_videos_playlist ON playlist_videos(playlistId);
+  `);
+
+  return db;
 }
 
 /**
@@ -178,10 +200,141 @@ function generateTrackingId(): string {
 }
 
 class Tracker {
-  private data: TrackerData;
+  private db: Database;
+  private insertVideoStmt: ReturnType<Database["prepare"]>;
+  private updateVideoStmt: ReturnType<Database["prepare"]>;
+  private getVideoStmt: ReturnType<Database["prepare"]>;
+  private getAllVideosStmt: ReturnType<Database["prepare"]>;
+  private getVideosByChannelStmt: ReturnType<Database["prepare"]>;
+  private markVideoDeletedStmt: ReturnType<Database["prepare"]>;
+  private insertFileStmt: ReturnType<Database["prepare"]>;
+  private deleteVideoFilesStmt: ReturnType<Database["prepare"]>;
+  private getVideoFilesStmt: ReturnType<Database["prepare"]>;
+  private upsertChannelStmt: ReturnType<Database["prepare"]>;
+  private getAllChannelsStmt: ReturnType<Database["prepare"]>;
+  private getChannelStmt: ReturnType<Database["prepare"]>;
+  private insertChannelVideoStmt: ReturnType<Database["prepare"]>;
+  private getChannelVideosStmt: ReturnType<Database["prepare"]>;
+  private upsertPlaylistStmt: ReturnType<Database["prepare"]>;
+  private getAllPlaylistsStmt: ReturnType<Database["prepare"]>;
+  private getPlaylistStmt: ReturnType<Database["prepare"]>;
+  private insertPlaylistVideoStmt: ReturnType<Database["prepare"]>;
+  private getPlaylistVideosStmt: ReturnType<Database["prepare"]>;
+  private getStatsStmt: ReturnType<Database["prepare"]>;
 
   constructor() {
-    this.data = loadTrackerData();
+    this.db = initTrackerDatabase();
+    
+    // Prepare statements for videos
+    this.insertVideoStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO videos 
+      (id, relativePath, title, channel, channelId, url, fullPath, downloadedAt, format, resolution, fileSize, duration, ytdlpCommand, deleted, deletedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    this.updateVideoStmt = this.db.prepare(`
+      UPDATE videos
+      SET deleted = ?, deletedAt = ?
+      WHERE id = ? AND relativePath = ?
+    `);
+    
+    this.getVideoStmt = this.db.prepare(`
+      SELECT * FROM videos WHERE id = ? AND relativePath = ?
+    `);
+    
+    this.getAllVideosStmt = this.db.prepare(`
+      SELECT * FROM videos ORDER BY downloadedAt DESC
+    `);
+    
+    this.getVideosByChannelStmt = this.db.prepare(`
+      SELECT v.* FROM videos v
+      WHERE v.channelId = ? OR v.channel = ?
+      ORDER BY v.downloadedAt DESC
+    `);
+    
+    this.markVideoDeletedStmt = this.db.prepare(`
+      UPDATE videos SET deleted = 1, deletedAt = ? WHERE id = ? AND relativePath = ?
+    `);
+    
+    // Prepare statements for tracked_files
+    this.insertFileStmt = this.db.prepare(`
+      INSERT OR REPLACE INTO tracked_files
+      (videoId, videoRelativePath, path, kind, intermediate, exists, hidden, firstSeenAt, deletedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    this.deleteVideoFilesStmt = this.db.prepare(`
+      DELETE FROM tracked_files WHERE videoId = ? AND videoRelativePath = ?
+    `);
+    
+    this.getVideoFilesStmt = this.db.prepare(`
+      SELECT * FROM tracked_files WHERE videoId = ? AND videoRelativePath = ?
+    `);
+    
+    // Prepare statements for channels
+    this.upsertChannelStmt = this.db.prepare(`
+      INSERT INTO channels (id, channelName, channelId, url, relativePath, downloadedAt, lastDownloadedAt, videoCount, maxVideos)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        channelName = excluded.channelName,
+        channelId = COALESCE(excluded.channelId, channelId),
+        lastDownloadedAt = excluded.lastDownloadedAt,
+        videoCount = excluded.videoCount,
+        maxVideos = COALESCE(excluded.maxVideos, maxVideos)
+    `);
+    
+    this.getAllChannelsStmt = this.db.prepare(`
+      SELECT * FROM channels ORDER BY downloadedAt DESC
+    `);
+    
+    this.getChannelStmt = this.db.prepare(`
+      SELECT * FROM channels WHERE url = ? OR relativePath = ?
+    `);
+    
+    this.insertChannelVideoStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO channel_videos (channelId, videoId, videoRelativePath)
+      VALUES (?, ?, ?)
+    `);
+    
+    this.getChannelVideosStmt = this.db.prepare(`
+      SELECT videoId, videoRelativePath FROM channel_videos WHERE channelId = ?
+    `);
+    
+    // Prepare statements for playlists
+    this.upsertPlaylistStmt = this.db.prepare(`
+      INSERT INTO playlists (id, playlistName, playlistId, url, relativePath, downloadedAt, lastDownloadedAt, videoCount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        playlistName = excluded.playlistName,
+        playlistId = COALESCE(excluded.playlistId, playlistId),
+        lastDownloadedAt = excluded.lastDownloadedAt,
+        videoCount = excluded.videoCount
+    `);
+    
+    this.getAllPlaylistsStmt = this.db.prepare(`
+      SELECT * FROM playlists ORDER BY downloadedAt DESC
+    `);
+    
+    this.getPlaylistStmt = this.db.prepare(`
+      SELECT * FROM playlists WHERE url = ? OR relativePath = ?
+    `);
+    
+    this.insertPlaylistVideoStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO playlist_videos (playlistId, videoId, videoRelativePath)
+      VALUES (?, ?, ?)
+    `);
+    
+    this.getPlaylistVideosStmt = this.db.prepare(`
+      SELECT videoId, videoRelativePath FROM playlist_videos WHERE playlistId = ?
+    `);
+    
+    // Prepare statement for stats
+    this.getStatsStmt = this.db.prepare(`
+      SELECT 
+        COUNT(*) as totalVideos,
+        SUM(CASE WHEN deleted = 1 THEN 1 ELSE 0 END) as deletedVideos
+      FROM videos
+    `);
   }
 
   /**
@@ -194,49 +347,99 @@ class Tracker {
       downloadedAt: Date.now(),
     };
 
-    // Check if video already exists (update if it does)
-    const existingIndex = this.data.videos.findIndex(v => v.id === trackedVideo.id && v.relativePath === trackedVideo.relativePath);
-    if (existingIndex >= 0) {
-      // Update existing video, preserve deleted status if it was deleted
-      const existing = this.data.videos[existingIndex];
-
-      // Merge files by path to retain intermediates + deletion state.
-      const mergedFilesByPath = new Map<string, TrackedFile>();
-      for (const f of (existing.files || [])) mergedFilesByPath.set(f.path, f);
-      for (const f of (trackedVideo.files || [])) {
-        const prev = mergedFilesByPath.get(f.path);
-        if (!prev) {
-          mergedFilesByPath.set(f.path, f);
-          continue;
-        }
+    // Check if video already exists
+    const existing = this.getVideoStmt.get(trackedVideo.id, trackedVideo.relativePath) as any;
+    
+    // Merge files by path to retain intermediates + deletion state
+    const mergedFilesByPath = new Map<string, TrackedFile>();
+    
+    if (existing) {
+      // Load existing files
+      const existingFiles = this.getVideoFilesStmt.all(trackedVideo.id, trackedVideo.relativePath) as Array<{
+        path: string;
+        kind: string;
+        intermediate: number;
+        exists: number;
+        hidden: number;
+        firstSeenAt: number;
+        deletedAt: number | null;
+      }>;
+      
+      for (const f of existingFiles) {
         mergedFilesByPath.set(f.path, {
-          ...prev,
-          ...f,
-          // Preserve firstSeenAt if we had it.
-          firstSeenAt: prev.firstSeenAt || f.firstSeenAt,
-          // If we ever saw a deletion timestamp, keep the earliest deletion time.
-          deletedAt: prev.deletedAt ?? f.deletedAt,
-          // Preserve classification if new one is "other" but previous was more specific.
-          kind: f.kind === "other" && prev.kind !== "other" ? prev.kind : f.kind,
-          intermediate: prev.intermediate || f.intermediate,
-          hidden: typeof f.hidden === "boolean" ? f.hidden : (prev.hidden || (prev.intermediate || f.intermediate) && !(f.exists ?? prev.exists)),
+          path: f.path,
+          kind: f.kind as TrackedFileKind,
+          intermediate: !!f.intermediate,
+          exists: !!f.exists,
+          hidden: !!f.hidden,
+          firstSeenAt: f.firstSeenAt,
+          deletedAt: f.deletedAt ?? undefined,
         });
       }
-
-      this.data.videos[existingIndex] = {
-        ...trackedVideo,
-        files: Array.from(mergedFilesByPath.values()),
-        deleted: existing.deleted,
-        deletedAt: existing.deletedAt,
-      };
-    } else {
-      // Ensure new videos always have a files array.
-      if (!trackedVideo.files) trackedVideo.files = [];
-      this.data.videos.push(trackedVideo);
+    }
+    
+    // Merge with new files
+    for (const f of (trackedVideo.files || [])) {
+      const prev = mergedFilesByPath.get(f.path);
+      if (!prev) {
+        mergedFilesByPath.set(f.path, f);
+        continue;
+      }
+      mergedFilesByPath.set(f.path, {
+        ...prev,
+        ...f,
+        // Preserve firstSeenAt if we had it
+        firstSeenAt: prev.firstSeenAt || f.firstSeenAt,
+        // If we ever saw a deletion timestamp, keep the earliest deletion time
+        deletedAt: prev.deletedAt ?? f.deletedAt,
+        // Preserve classification if new one is "other" but previous was more specific
+        kind: f.kind === "other" && prev.kind !== "other" ? prev.kind : f.kind,
+        intermediate: prev.intermediate || f.intermediate,
+        hidden: typeof f.hidden === "boolean" ? f.hidden : (prev.hidden || (prev.intermediate || f.intermediate) && !(f.exists ?? prev.exists)),
+      });
     }
 
-    saveTrackerData(this.data);
-    return trackedVideo;
+    // Insert or update video
+    this.insertVideoStmt.run(
+      trackedVideo.id,
+      trackedVideo.relativePath,
+      trackedVideo.title,
+      trackedVideo.channel,
+      trackedVideo.channelId ?? null,
+      trackedVideo.url,
+      trackedVideo.fullPath,
+      trackedVideo.downloadedAt,
+      trackedVideo.format,
+      trackedVideo.resolution ?? null,
+      trackedVideo.fileSize ?? null,
+      trackedVideo.duration ?? null,
+      trackedVideo.ytdlpCommand ?? null,
+      existing?.deleted ?? 0,
+      existing?.deletedAt ?? null
+    );
+
+    // Delete old files and insert merged files
+    this.deleteVideoFilesStmt.run(trackedVideo.id, trackedVideo.relativePath);
+    for (const file of mergedFilesByPath.values()) {
+      this.insertFileStmt.run(
+        trackedVideo.id,
+        trackedVideo.relativePath,
+        file.path,
+        file.kind,
+        file.intermediate ? 1 : 0,
+        file.exists ? 1 : 0,
+        file.hidden ? 1 : 0,
+        file.firstSeenAt,
+        file.deletedAt ?? null
+      );
+    }
+
+    return {
+      ...trackedVideo,
+      files: Array.from(mergedFilesByPath.values()),
+      deleted: existing?.deleted ?? false,
+      deletedAt: existing?.deletedAt ?? undefined,
+    };
   }
 
   /**
@@ -251,43 +454,61 @@ class Tracker {
     maxVideos?: number;
   }): TrackedChannel {
     // Find existing channel by URL or relative path
-    let existing = this.data.channels.find(
-      c => c.url === channel.url || c.relativePath === channel.relativePath
-    );
+    const existing = this.getChannelStmt.get(channel.url, channel.relativePath) as any;
+
+    let channelId: string;
+    let videoIds: string[];
+    let videoCount: number;
+    let downloadedAt: number;
 
     if (existing) {
-      // Update existing channel
-      if (!existing.videoIds.includes(channel.videoId)) {
-        existing.videoIds.push(channel.videoId);
-        existing.videoCount = existing.videoIds.length;
+      channelId = existing.id;
+      // Get existing video IDs
+      const existingVideoIds = this.getChannelVideosStmt.all(channelId) as Array<{ videoId: string; videoRelativePath: string }>;
+      videoIds = existingVideoIds.map(v => v.videoId);
+      
+      // Add new video ID if not present
+      if (!videoIds.includes(channel.videoId)) {
+        videoIds.push(channel.videoId);
       }
-      existing.lastDownloadedAt = Date.now();
-      existing.channelName = channel.channelName; // Update name in case it changed
-      if (channel.channelId) {
-        existing.channelId = channel.channelId;
-      }
-      if (channel.maxVideos !== undefined) {
-        existing.maxVideos = channel.maxVideos;
-      }
+      videoCount = videoIds.length;
+      downloadedAt = existing.downloadedAt;
     } else {
-      // Create new channel entry
-      existing = {
-        id: generateTrackingId(),
-        channelName: channel.channelName,
-        channelId: channel.channelId,
-        url: channel.url,
-        relativePath: channel.relativePath,
-        downloadedAt: Date.now(),
-        lastDownloadedAt: Date.now(),
-        videoCount: 1,
-        videoIds: [channel.videoId],
-        maxVideos: channel.maxVideos,
-      };
-      this.data.channels.push(existing);
+      channelId = generateTrackingId();
+      videoIds = [channel.videoId];
+      videoCount = 1;
+      downloadedAt = Date.now();
     }
 
-    saveTrackerData(this.data);
-    return existing;
+    // Upsert channel
+    this.upsertChannelStmt.run(
+      channelId,
+      channel.channelName,
+      channel.channelId ?? null,
+      channel.url,
+      channel.relativePath,
+      downloadedAt,
+      Date.now(),
+      videoCount,
+      channel.maxVideos ?? null
+    );
+
+    // Add video to channel (use channel's relativePath as videoRelativePath)
+    // Videos downloaded for a channel are stored in the channel's folder
+    this.insertChannelVideoStmt.run(channelId, channel.videoId, channel.relativePath);
+
+    return {
+      id: channelId,
+      channelName: channel.channelName,
+      channelId: channel.channelId,
+      url: channel.url,
+      relativePath: channel.relativePath,
+      downloadedAt,
+      lastDownloadedAt: Date.now(),
+      videoCount,
+      videoIds,
+      maxVideos: channel.maxVideos,
+    };
   }
 
   /**
@@ -301,100 +522,157 @@ class Tracker {
     videoId: string; // Video ID that was just downloaded
   }): TrackedPlaylist {
     // Find existing playlist by URL or relative path
-    let existing = this.data.playlists.find(
-      p => p.url === playlist.url || p.relativePath === playlist.relativePath
-    );
+    const existing = this.getPlaylistStmt.get(playlist.url, playlist.relativePath) as any;
+
+    let playlistId: string;
+    let videoIds: string[];
+    let videoCount: number;
+    let downloadedAt: number;
 
     if (existing) {
-      // Update existing playlist
-      if (!existing.videoIds.includes(playlist.videoId)) {
-        existing.videoIds.push(playlist.videoId);
-        existing.videoCount = existing.videoIds.length;
+      playlistId = existing.id;
+      // Get existing video IDs
+      const existingVideoIds = this.getPlaylistVideosStmt.all(playlistId) as Array<{ videoId: string; videoRelativePath: string }>;
+      videoIds = existingVideoIds.map(v => v.videoId);
+      
+      // Add new video ID if not present
+      if (!videoIds.includes(playlist.videoId)) {
+        videoIds.push(playlist.videoId);
       }
-      existing.lastDownloadedAt = Date.now();
-      existing.playlistName = playlist.playlistName; // Update name in case it changed
-      if (playlist.playlistId) {
-        existing.playlistId = playlist.playlistId;
-      }
+      videoCount = videoIds.length;
+      downloadedAt = existing.downloadedAt;
     } else {
-      // Create new playlist entry
-      existing = {
-        id: generateTrackingId(),
-        playlistName: playlist.playlistName,
-        playlistId: playlist.playlistId,
-        url: playlist.url,
-        relativePath: playlist.relativePath,
-        downloadedAt: Date.now(),
-        lastDownloadedAt: Date.now(),
-        videoCount: 1,
-        videoIds: [playlist.videoId],
-      };
-      this.data.playlists.push(existing);
+      playlistId = generateTrackingId();
+      videoIds = [playlist.videoId];
+      videoCount = 1;
+      downloadedAt = Date.now();
     }
 
-    saveTrackerData(this.data);
-    return existing;
+    // Upsert playlist
+    this.upsertPlaylistStmt.run(
+      playlistId,
+      playlist.playlistName,
+      playlist.playlistId ?? null,
+      playlist.url,
+      playlist.relativePath,
+      downloadedAt,
+      Date.now(),
+      videoCount
+    );
+
+    // Add video to playlist (use playlist's relativePath as videoRelativePath)
+    // Videos downloaded for a playlist are stored in the playlist's folder
+    this.insertPlaylistVideoStmt.run(playlistId, playlist.videoId, playlist.relativePath);
+
+    return {
+      id: playlistId,
+      playlistName: playlist.playlistName,
+      playlistId: playlist.playlistId,
+      url: playlist.url,
+      relativePath: playlist.relativePath,
+      downloadedAt,
+      lastDownloadedAt: Date.now(),
+      videoCount,
+      videoIds,
+    };
   }
 
   /**
    * Mark a video as deleted
    */
   markVideoDeleted(videoId: string, relativePath: string): boolean {
-    const video = this.data.videos.find(
-      v => v.id === videoId && v.relativePath === relativePath
-    );
-    if (video) {
-      video.deleted = true;
-      video.deletedAt = Date.now();
-      saveTrackerData(this.data);
-      return true;
-    }
-    return false;
+    const result = this.markVideoDeletedStmt.run(Date.now(), videoId, relativePath);
+    return result.changes > 0;
+  }
+
+  /**
+   * Delete a video from tracking
+   */
+  deleteVideo(videoId: string, relativePath: string): boolean {
+    const deleteVideoStmt = this.db.prepare(`
+      DELETE FROM videos WHERE id = ? AND relativePath = ?
+    `);
+    const result = deleteVideoStmt.run(videoId, relativePath);
+    return result.changes > 0;
   }
 
   /**
    * Get all tracked videos
    */
   getAllVideos(): TrackedVideo[] {
-    this.data = loadTrackerData();
-    return [...this.data.videos];
+    const rows = this.getAllVideosStmt.all() as Array<any>;
+    return rows.map(row => this.videoRowToTrackedVideo(row));
   }
 
   /**
    * Get all tracked channels
    */
   getAllChannels(): TrackedChannel[] {
-    this.data = loadTrackerData();
-    return [...this.data.channels];
+    const rows = this.getAllChannelsStmt.all() as Array<any>;
+    return rows.map(row => {
+      const videoIds = this.getChannelVideosStmt.all(row.id) as Array<{ videoId: string; videoRelativePath: string }>;
+      return {
+        id: row.id,
+        channelName: row.channelName,
+        channelId: row.channelId ?? undefined,
+        url: row.url,
+        relativePath: row.relativePath,
+        downloadedAt: row.downloadedAt,
+        lastDownloadedAt: row.lastDownloadedAt ?? undefined,
+        videoCount: row.videoCount,
+        videoIds: videoIds.map(v => v.videoId),
+        maxVideos: row.maxVideos ?? undefined,
+      };
+    });
   }
 
   /**
    * Get all tracked playlists
    */
   getAllPlaylists(): TrackedPlaylist[] {
-    this.data = loadTrackerData();
-    return [...this.data.playlists];
+    const rows = this.getAllPlaylistsStmt.all() as Array<any>;
+    return rows.map(row => {
+      const videoIds = this.getPlaylistVideosStmt.all(row.id) as Array<{ videoId: string; videoRelativePath: string }>;
+      return {
+        id: row.id,
+        playlistName: row.playlistName,
+        playlistId: row.playlistId ?? undefined,
+        url: row.url,
+        relativePath: row.relativePath,
+        downloadedAt: row.downloadedAt,
+        lastDownloadedAt: row.lastDownloadedAt ?? undefined,
+        videoCount: row.videoCount,
+        videoIds: videoIds.map(v => v.videoId),
+      };
+    });
   }
 
   /**
    * Get videos by channel
    */
   getVideosByChannel(channelId: string): TrackedVideo[] {
-    this.data = loadTrackerData();
-    return this.data.videos.filter(v => v.channelId === channelId || v.channel === channelId);
+    const rows = this.getVideosByChannelStmt.all(channelId, channelId) as Array<any>;
+    return rows.map(row => this.videoRowToTrackedVideo(row));
   }
 
   /**
    * Get videos by playlist
    */
   getVideosByPlaylist(playlistId: string): TrackedVideo[] {
-    this.data = loadTrackerData();
-    // Note: This requires playlist tracking to include video references
-    // For now, we'll filter by relative path
-    return this.data.videos.filter(v => {
-      const playlist = this.data.playlists.find(p => p.id === playlistId);
-      return playlist && v.relativePath === playlist.relativePath;
-    });
+    const playlist = this.db.prepare(`SELECT * FROM playlists WHERE id = ?`).get(playlistId) as any;
+    if (!playlist) return [];
+    
+    const videoIds = this.getPlaylistVideosStmt.all(playlistId) as Array<{ videoId: string; videoRelativePath: string }>;
+    const videos: TrackedVideo[] = [];
+    
+    for (const { videoId, videoRelativePath } of videoIds) {
+      const video = this.getVideoStmt.get(videoId, videoRelativePath) as any;
+      if (video) {
+        videos.push(this.videoRowToTrackedVideo(video));
+      }
+    }
+    
+    return videos;
   }
 
   /**
@@ -406,14 +684,57 @@ class Tracker {
     totalPlaylists: number;
     deletedVideos: number;
   } {
-    this.data = loadTrackerData();
-    const deletedVideos = this.data.videos.filter(v => v.deleted).length;
+    const stats = this.getStatsStmt.get() as { totalVideos: number; deletedVideos: number };
+    const channels = this.getAllChannelsStmt.all() as Array<any>;
+    const playlists = this.getAllPlaylistsStmt.all() as Array<any>;
 
     return {
-      totalVideos: this.data.videos.length,
-      totalChannels: this.data.channels.length,
-      totalPlaylists: this.data.playlists.length,
-      deletedVideos,
+      totalVideos: stats.totalVideos,
+      totalChannels: channels.length,
+      totalPlaylists: playlists.length,
+      deletedVideos: stats.deletedVideos,
+    };
+  }
+
+  /**
+   * Convert a database row to TrackedVideo
+   */
+  private videoRowToTrackedVideo(row: any): TrackedVideo {
+    const files = this.getVideoFilesStmt.all(row.id, row.relativePath) as Array<{
+      path: string;
+      kind: string;
+      intermediate: number;
+      exists: number;
+      hidden: number;
+      firstSeenAt: number;
+      deletedAt: number | null;
+    }>;
+
+    return {
+      id: row.id,
+      title: row.title,
+      channel: row.channel,
+      channelId: row.channelId ?? undefined,
+      url: row.url,
+      relativePath: row.relativePath,
+      fullPath: row.fullPath,
+      downloadedAt: row.downloadedAt,
+      format: row.format as "video" | "audio",
+      resolution: row.resolution as "1080" | "720" | undefined,
+      fileSize: row.fileSize ?? undefined,
+      duration: row.duration ?? undefined,
+      ytdlpCommand: row.ytdlpCommand ?? undefined,
+      files: files.map(f => ({
+        path: f.path,
+        kind: f.kind as TrackedFileKind,
+        intermediate: !!f.intermediate,
+        exists: !!f.exists,
+        hidden: !!f.hidden,
+        firstSeenAt: f.firstSeenAt,
+        deletedAt: f.deletedAt ?? undefined,
+      })),
+      deleted: !!row.deleted,
+      deletedAt: row.deletedAt ?? undefined,
     };
   }
 }

@@ -2,7 +2,7 @@ import { serve, file } from "bun";
 import { mkdirSync, existsSync, rmSync } from "fs";
 import { startDownload, getPlaylistName, getChannelName, sanitizeFolderName } from "./downloader";
 import { getScheduler } from "./scheduler";
-import { getTracker, loadTrackerData, saveTrackerData } from "./tracker";
+import { getTracker } from "./tracker";
 import { getCollectionsManager } from "./collections";
 import { getDownloadStatusTracker } from "./download-status";
 import { join, resolve } from "path";
@@ -745,28 +745,7 @@ const server = serve({
           const allVideos = tracker.getAllVideos();
           const testVideos = allVideos.filter(v => v.relativePath.includes(testCollectionName) || v.fullPath.startsWith(testCollectionRootPath));
           
-          // Load tracker data once before the loop
-          let trackerData = loadTrackerData();
-          if (!trackerData || !trackerData.videos) {
-            // Ensure trackerData is properly initialized
-            trackerData = {
-              videos: [],
-              channels: [],
-              playlists: [],
-              lastUpdated: Date.now(),
-            };
-          }
-          
           for (const video of testVideos) {
-            // Remove from tracker data
-            const videoIndex = trackerData.videos.findIndex(
-              v => v.id === video.id && (v.relativePath === video.relativePath || v.fullPath === video.fullPath)
-            );
-            if (videoIndex >= 0) {
-              trackerData.videos.splice(videoIndex, 1);
-              deletedTrackedVideos++;
-            }
-            
             // Delete associated files
             if (video.files) {
               for (const file of video.files) {
@@ -780,11 +759,11 @@ const server = serve({
                 }
               }
             }
-          }
-          
-          // Save updated tracker data
-          if (deletedTrackedVideos > 0) {
-            saveTrackerData(trackerData);
+            
+            // Remove from tracker
+            if (tracker.deleteVideo(video.id, video.relativePath)) {
+              deletedTrackedVideos++;
+            }
           }
           
           // Delete collection directory and all contents
