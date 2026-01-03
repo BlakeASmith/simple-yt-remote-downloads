@@ -970,18 +970,6 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
 
   return (
     <div className="grid gap-6">
-      <SectionHeader
-        title="Tracking"
-        subtitle="Live download status + history from the tracker."
-        right={
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" onClick={() => loadAll()}>
-              Refresh
-            </Button>
-          </div>
-        }
-      />
-
       <div className="grid gap-4 md:grid-cols-4">
         <Card title="Active downloads">
           {downloads.length === 0 ? (
