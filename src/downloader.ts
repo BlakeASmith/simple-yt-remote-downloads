@@ -17,6 +17,8 @@ export interface DownloadOptions {
   includeThumbnail?: boolean;
   includeTranscript?: boolean;
   excludeShorts?: boolean;
+  collectionId?: string;
+  useArchiveFile?: boolean; // If false, download without archive file (allows multiple versions)
 }
 
 export interface DownloadResult {
@@ -328,6 +330,29 @@ async function getPlaylistVideoIds(url: string, maxVideos?: number): Promise<str
 }
 
 /**
+ * Generate archive file path based on collection and format
+ * Returns null if archive file should not be used
+ */
+function getArchiveFilePath(options: DownloadOptions): string | null {
+  // If useArchiveFile is explicitly false, don't use archive file
+  // Default to true if not specified (backward compatibility)
+  if (options.useArchiveFile === false) {
+    return null;
+  }
+
+  // Determine format suffix: audio or video
+  const formatSuffix = options.audioOnly ? "audio" : "video";
+
+  // If collection ID is provided, use collection-specific archive file
+  if (options.collectionId) {
+    return `/downloads/.archive-${options.collectionId}-${formatSuffix}`;
+  }
+
+  // Default archive file (for non-collection downloads)
+  return `/downloads/.archive-${formatSuffix}`;
+}
+
+/**
  * Build yt-dlp arguments based on download options
  */
 function buildYtDlpArgs(options: DownloadOptions): string[] {
@@ -353,10 +378,14 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
     finalUrl,
     "--output",
     outputTemplate,
-    "--download-archive",
-    ARCHIVE_FILE,
     "--restrict-filenames",
   ];
+
+  // Add archive file if enabled
+  const archiveFile = getArchiveFilePath(options);
+  if (archiveFile) {
+    args.push("--download-archive", archiveFile);
+  }
 
   // Add thumbnail options if requested
   if (shouldIncludeThumbnail) {

@@ -64,6 +64,10 @@ async function checkAndTriggerSchedules() {
           payload.excludeShorts = schedule.excludeShorts;
         }
 
+        if (schedule.useArchiveFile !== undefined) {
+          payload.useArchiveFile = schedule.useArchiveFile;
+        }
+
         // Trigger download via API
         try {
           const response = await fetch(API_URL, {
