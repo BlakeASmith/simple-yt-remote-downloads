@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, rmSync } from "fs";
+import { rm } from "fs/promises";
 import { Database } from "bun:sqlite";
 
 export const TRACKER_DB = "/downloads/.tracker.db";
@@ -587,6 +588,7 @@ class Tracker {
 
   /**
    * Delete a video from tracking and remove all associated files from disk
+   * Returns immediately after database deletion, file deletion happens asynchronously
    */
   deleteVideo(videoId: string, relativePath: string): boolean {
     // Get video info and associated files before deletion
@@ -603,33 +605,44 @@ class Tracker {
       exists: number;
     }>;
 
-    // Delete all associated files from disk
-    let deletedFiles = 0;
-    for (const file of files) {
-      try {
-        if (file.exists && existsSync(file.path)) {
-          rmSync(file.path, { force: true });
-          deletedFiles++;
-        }
-      } catch (error) {
-        // Log but continue - don't fail deletion if a file can't be deleted
-        console.error(`[${new Date().toISOString()}] Failed to delete file ${file.path}:`, error);
-      }
-    }
-
-    // Delete video from database (cascades to tracked_files via foreign key)
+    // Delete video from database first (cascades to tracked_files via foreign key)
     const deleteVideoStmt = this.db.prepare(`
       DELETE FROM videos WHERE id = ? AND relativePath = ?
     `);
     const result = deleteVideoStmt.run(videoId, relativePath);
     
-    console.log(`[${new Date().toISOString()}] Deleted video ${videoId} (${relativePath}): ${deletedFiles} files removed`);
+    if (result.changes === 0) {
+      return false;
+    }
+
+    // Delete all associated files from disk asynchronously (non-blocking)
+    const filePaths = files.filter(f => f.exists && existsSync(f.path)).map(f => f.path);
+    if (filePaths.length > 0) {
+      // Perform file deletion asynchronously without blocking
+      Promise.all(
+        filePaths.map(async (filePath) => {
+          try {
+            await rm(filePath, { force: true });
+          } catch (error) {
+            // Log but continue - don't fail deletion if a file can't be deleted
+            console.error(`[${new Date().toISOString()}] Failed to delete file ${filePath}:`, error);
+          }
+        })
+      ).then(() => {
+        console.log(`[${new Date().toISOString()}] Asynchronously deleted ${filePaths.length} files for video ${videoId} (${relativePath})`);
+      }).catch((error) => {
+        console.error(`[${new Date().toISOString()}] Error during async file deletion for video ${videoId}:`, error);
+      });
+    }
     
-    return result.changes > 0;
+    console.log(`[${new Date().toISOString()}] Deleted video ${videoId} (${relativePath}) from database, ${filePaths.length} files queued for deletion`);
+    
+    return true;
   }
 
   /**
    * Delete a channel and all its videos with associated files
+   * Returns immediately after database deletion, file deletion happens asynchronously
    */
   deleteChannel(channelId: string): boolean {
     // Check if channel exists
@@ -643,9 +656,8 @@ class Tracker {
     // Get all videos associated with this channel
     const channelVideos = this.getChannelVideosStmt.all(channelId) as Array<{ videoId: string; videoRelativePath: string }>;
     
+    // Delete each video (which will delete files and database entries asynchronously)
     let deletedVideos = 0;
-    
-    // Delete each video (which will delete files and database entries)
     for (const { videoId, videoRelativePath } of channelVideos) {
       if (this.deleteVideo(videoId, videoRelativePath)) {
         deletedVideos++;
@@ -658,13 +670,14 @@ class Tracker {
     `);
     const result = deleteChannelStmt.run(channelId);
     
-    console.log(`[${new Date().toISOString()}] Deleted channel ${channelId}: ${deletedVideos} videos removed`);
+    console.log(`[${new Date().toISOString()}] Deleted channel ${channelId} from database: ${deletedVideos} videos removed (files deleting asynchronously)`);
     
     return result.changes > 0;
   }
 
   /**
    * Delete a playlist and all its videos with associated files
+   * Returns immediately after database deletion, file deletion happens asynchronously
    */
   deletePlaylist(playlistId: string): boolean {
     // Check if playlist exists
@@ -678,9 +691,8 @@ class Tracker {
     // Get all videos associated with this playlist
     const playlistVideos = this.getPlaylistVideosStmt.all(playlistId) as Array<{ videoId: string; videoRelativePath: string }>;
     
+    // Delete each video (which will delete files and database entries asynchronously)
     let deletedVideos = 0;
-    
-    // Delete each video (which will delete files and database entries)
     for (const { videoId, videoRelativePath } of playlistVideos) {
       if (this.deleteVideo(videoId, videoRelativePath)) {
         deletedVideos++;
@@ -693,31 +705,31 @@ class Tracker {
     `);
     const result = deletePlaylistStmt.run(playlistId);
     
-    console.log(`[${new Date().toISOString()}] Deleted playlist ${playlistId}: ${deletedVideos} videos removed`);
+    console.log(`[${new Date().toISOString()}] Deleted playlist ${playlistId} from database: ${deletedVideos} videos removed (files deleting asynchronously)`);
     
     return result.changes > 0;
   }
 
   /**
    * Delete all videos within a collection path and their files
+   * Returns immediately after database deletion, file deletion happens asynchronously
    */
   deleteVideosByCollectionPath(collectionRootPath: string): { deletedVideos: number; deletedFiles: number } {
     // Get all videos and filter by those whose fullPath starts with collectionRootPath
     const allVideos = this.getAllVideos();
     const collectionVideos = allVideos.filter(v => v.fullPath.startsWith(collectionRootPath));
     
+    // Delete each video (which will delete files and database entries asynchronously)
     let deletedVideos = 0;
-    
-    // Delete each video (which will delete files and database entries)
     for (const video of collectionVideos) {
       if (this.deleteVideo(video.id, video.relativePath)) {
         deletedVideos++;
       }
     }
     
-    console.log(`[${new Date().toISOString()}] Deleted ${deletedVideos} videos from collection path ${collectionRootPath}`);
+    console.log(`[${new Date().toISOString()}] Deleted ${deletedVideos} videos from collection path ${collectionRootPath} (files deleting asynchronously)`);
     
-    // Note: deletedFiles count is not tracked here since deleteVideo handles file deletion internally
+    // Note: deletedFiles count is not tracked here since deleteVideo handles file deletion internally and asynchronously
     return { deletedVideos, deletedFiles: 0 };
   }
 

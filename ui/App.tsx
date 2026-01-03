@@ -524,7 +524,10 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
                           if (!window.confirm("Delete this schedule?")) return;
                           const r = await apiSend<{ success: boolean; message?: string }>(`/api/schedules/${s.id}`, "DELETE");
                           if (!r.ok) return props.showToast("bad", r.message);
+                          // Optimistically update UI immediately
+                          setSchedules(prev => prev.filter(sched => sched.id !== s.id));
                           props.showToast("good", "Schedule deleted.");
+                          // Refresh to ensure consistency
                           await loadSchedules();
                         }}
                       >
@@ -611,7 +614,9 @@ function CollectionsModal(props: {
                         const r = await apiSend<{ success: boolean; message?: string; deletedVideos?: number }>(`/api/collections/${c.id}`, "DELETE");
                         if (!r.ok) return props.showToast("bad", r.message);
                         const videoCount = r.data.deletedVideos ?? 0;
+                        // Optimistically update UI immediately
                         props.showToast("good", `Collection deleted. ${videoCount} videos removed.`);
+                        // Refresh to ensure consistency
                         await props.onChanged();
                       }}
                     >
@@ -1107,12 +1112,16 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                 variant="danger"
                                 onClick={async () => {
                                   if (!window.confirm(`Delete "${v.title}"? This will remove all associated files and cannot be undone.`)) return;
+                                  const videoKey = `${v.id}:${v.relativePath}`;
                                   const r = await apiSend<{ success: boolean; message?: string }>(
                                     `/api/tracker/videos/${encodeURIComponent(v.id)}?relativePath=${encodeURIComponent(v.relativePath)}`,
                                     "DELETE"
                                   );
                                   if (!r.ok) return props.showToast("bad", r.message);
+                                  // Optimistically update UI immediately
+                                  setVideos(prev => prev.filter(vid => `${vid.id}:${vid.relativePath}` !== videoKey));
                                   props.showToast("good", "Video deleted.");
+                                  // Refresh to ensure consistency
                                   await loadAll();
                                 }}
                               >
@@ -1265,7 +1274,12 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                 if (!window.confirm(`Delete channel "${c.channelName}"? This will remove all ${c.videoCount} videos and their files. This cannot be undone.`)) return;
                                 const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/channels/${c.id}`, "DELETE");
                                 if (!r.ok) return props.showToast("bad", r.message);
+                                // Optimistically update UI immediately
+                                setChannels(prev => prev.filter(ch => ch.id !== c.id));
+                                // Also remove videos from this channel from the videos list
+                                setVideos(prev => prev.filter(v => v.channelId !== c.channelId && v.channel !== c.channelName));
                                 props.showToast("good", "Channel and all videos deleted.");
+                                // Refresh to ensure consistency
                                 await loadAll();
                               }}
                             >
@@ -1308,7 +1322,12 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                 if (!window.confirm(`Delete playlist "${p.playlistName}"? This will remove all ${p.videoCount} videos and their files. This cannot be undone.`)) return;
                                 const r = await apiSend<{ success: boolean; message?: string }>(`/api/tracker/playlists/${p.id}`, "DELETE");
                                 if (!r.ok) return props.showToast("bad", r.message);
+                                // Optimistically update UI immediately
+                                setPlaylists(prev => prev.filter(pl => pl.id !== p.id));
+                                // Note: We can't easily filter videos by playlist without additional data,
+                                // so we'll rely on the refresh to update the list
                                 props.showToast("good", "Playlist and all videos deleted.");
+                                // Refresh to ensure consistency
                                 await loadAll();
                               }}
                             >

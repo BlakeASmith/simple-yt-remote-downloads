@@ -1,5 +1,6 @@
 import { serve, file } from "bun";
 import { mkdirSync, existsSync, rmSync } from "fs";
+import { rm } from "fs/promises";
 import { startDownload, getPlaylistName, getChannelName, sanitizeFolderName } from "./downloader";
 import { getScheduler } from "./scheduler";
 import { getTracker } from "./tracker";
@@ -752,16 +753,15 @@ const server = serve({
           return response;
         }
 
-        // Delete all videos in the collection
+        // Delete all videos in the collection (async file deletion)
         const videoResult = tracker.deleteVideosByCollectionPath(collection.rootPath);
         
-        // Delete collection directory and all contents
-        try {
-          if (existsSync(collection.rootPath)) {
-            rmSync(collection.rootPath, { recursive: true, force: true });
-          }
-        } catch (error) {
-          console.error("Error deleting collection directory:", error);
+        // Delete collection directory and all contents asynchronously (non-blocking)
+        const collectionPath = collection.rootPath;
+        if (existsSync(collectionPath)) {
+          rm(collectionPath, { recursive: true, force: true }).catch((error) => {
+            console.error("Error deleting collection directory:", error);
+          });
         }
 
         // Delete collection entry
