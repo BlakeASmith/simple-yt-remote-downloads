@@ -404,8 +404,13 @@ const server = serve({
 
     // Tracker API routes
     if (pathname === "/api/tracker/videos" && req.method === "GET") {
+      const startTime = performance.now();
       const tracker = getTracker();
       const videos = tracker.getAllVideos();
+      const duration = performance.now() - startTime;
+      if (duration > 100) {
+        console.log(`[${new Date().toISOString()}] [PERF] GET /api/tracker/videos - Duration: ${duration.toFixed(2)}ms, Videos: ${videos.length}`);
+      }
       const response = Response.json({ success: true, videos });
       Object.entries(corsHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
@@ -444,11 +449,24 @@ const server = serve({
     }
 
     if (pathname === "/api/tracker/all" && req.method === "GET") {
+      const startTime = performance.now();
       const tracker = getTracker();
+      const videosStartTime = performance.now();
       const videos = tracker.getAllVideos();
+      const videosDuration = performance.now() - videosStartTime;
+      const channelsStartTime = performance.now();
       const channels = tracker.getAllChannels();
+      const channelsDuration = performance.now() - channelsStartTime;
+      const playlistsStartTime = performance.now();
       const playlists = tracker.getAllPlaylists();
+      const playlistsDuration = performance.now() - playlistsStartTime;
+      const statsStartTime = performance.now();
       const stats = tracker.getStats();
+      const statsDuration = performance.now() - statsStartTime;
+      const totalDuration = performance.now() - startTime;
+      if (totalDuration > 100) {
+        console.log(`[${new Date().toISOString()}] [PERF] GET /api/tracker/all - Videos: ${videosDuration.toFixed(2)}ms, Channels: ${channelsDuration.toFixed(2)}ms, Playlists: ${playlistsDuration.toFixed(2)}ms, Stats: ${statsDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms`);
+      }
       const response = Response.json({
         success: true,
         videos,
@@ -465,10 +483,19 @@ const server = serve({
     // Delete channel: DELETE /api/tracker/channels/:id
     const channelDeleteMatch = pathname.match(/^\/api\/tracker\/channels\/([^\/]+)$/);
     if (channelDeleteMatch && req.method === "DELETE") {
+      const startTime = performance.now();
       try {
         const channelId = channelDeleteMatch[1];
+        const jobQueueStartTime = performance.now();
         const jobQueue = getJobQueue();
+        const jobQueueGetDuration = performance.now() - jobQueueStartTime;
+        
+        const createJobStartTime = performance.now();
         const job = jobQueue.createJob("delete_channel", { channelId });
+        const createJobDuration = performance.now() - createJobStartTime;
+        
+        const totalDuration = performance.now() - startTime;
+        console.log(`[${new Date().toISOString()}] [PERF] DELETE /api/tracker/channels/${channelId} - GetJobQueue: ${jobQueueGetDuration.toFixed(2)}ms, CreateJob: ${createJobDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms`);
 
         const response = Response.json({
           success: true,
@@ -480,7 +507,8 @@ const server = serve({
         });
         return response;
       } catch (err: any) {
-        console.error("Error queuing channel deletion:", err);
+        const totalDuration = performance.now() - startTime;
+        console.error(`[${new Date().toISOString()}] [PERF] Error queuing channel deletion (${totalDuration.toFixed(2)}ms):`, err);
         const response = Response.json(
           { success: false, message: err?.message || "Failed to queue channel deletion" },
           { status: 500 }
@@ -524,9 +552,14 @@ const server = serve({
 
     // Job status API routes
     if (pathname === "/api/jobs" && req.method === "GET") {
+      const startTime = performance.now();
       const jobQueue = getJobQueue();
       const limit = parseInt(url.searchParams.get("limit") || "100", 10);
       const jobs = jobQueue.getAllJobs(limit);
+      const duration = performance.now() - startTime;
+      if (duration > 50) {
+        console.log(`[${new Date().toISOString()}] [PERF] GET /api/jobs - Duration: ${duration.toFixed(2)}ms, Jobs: ${jobs.length}`);
+      }
       const response = Response.json({
         success: true,
         jobs,
@@ -607,6 +640,7 @@ const server = serve({
     // Delete video: DELETE /api/tracker/videos/:videoId?relativePath=...
     const videoDeleteMatch = pathname.match(/^\/api\/tracker\/videos\/([^\/]+)$/);
     if (videoDeleteMatch && req.method === "DELETE") {
+      const startTime = performance.now();
       try {
         const videoId = videoDeleteMatch[1];
         const relativePath = url.searchParams.get("relativePath");
@@ -620,8 +654,16 @@ const server = serve({
           });
           return response;
         }
+        const jobQueueStartTime = performance.now();
         const jobQueue = getJobQueue();
+        const jobQueueGetDuration = performance.now() - jobQueueStartTime;
+        
+        const createJobStartTime = performance.now();
         const job = jobQueue.createJob("delete_video", { videoId, relativePath });
+        const createJobDuration = performance.now() - createJobStartTime;
+        
+        const totalDuration = performance.now() - startTime;
+        console.log(`[${new Date().toISOString()}] [PERF] DELETE /api/tracker/videos/${videoId} - GetJobQueue: ${jobQueueGetDuration.toFixed(2)}ms, CreateJob: ${createJobDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms`);
 
         const response = Response.json({
           success: true,
@@ -633,7 +675,8 @@ const server = serve({
         });
         return response;
       } catch (err: any) {
-        console.error("Error queuing video deletion:", err);
+        const totalDuration = performance.now() - startTime;
+        console.error(`[${new Date().toISOString()}] [PERF] Error queuing video deletion (${totalDuration.toFixed(2)}ms):`, err);
         const response = Response.json(
           { success: false, message: err?.message || "Failed to queue video deletion" },
           { status: 500 }
@@ -756,10 +799,16 @@ const server = serve({
     // Delete collection: DELETE /api/collections/:id
     const collectionDeleteMatch = pathname.match(/^\/api\/collections\/([^\/]+)$/);
     if (collectionDeleteMatch && req.method === "DELETE") {
+      const startTime = performance.now();
       try {
         const collectionId = collectionDeleteMatch[1];
+        const managerStartTime = performance.now();
         const collectionsManager = getCollectionsManager();
+        const managerGetDuration = performance.now() - managerStartTime;
+        
+        const getCollectionStartTime = performance.now();
         const collection = collectionsManager.getCollection(collectionId);
+        const getCollectionDuration = performance.now() - getCollectionStartTime;
         
         if (!collection) {
           const response = Response.json(
@@ -772,8 +821,16 @@ const server = serve({
           return response;
         }
 
+        const jobQueueStartTime = performance.now();
         const jobQueue = getJobQueue();
+        const jobQueueGetDuration = performance.now() - jobQueueStartTime;
+        
+        const createJobStartTime = performance.now();
         const job = jobQueue.createJob("delete_collection", { collectionId });
+        const createJobDuration = performance.now() - createJobStartTime;
+        
+        const totalDuration = performance.now() - startTime;
+        console.log(`[${new Date().toISOString()}] [PERF] DELETE /api/collections/${collectionId} - GetManager: ${managerGetDuration.toFixed(2)}ms, GetCollection: ${getCollectionDuration.toFixed(2)}ms, GetJobQueue: ${jobQueueGetDuration.toFixed(2)}ms, CreateJob: ${createJobDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms`);
 
         const response = Response.json({
           success: true,
@@ -785,7 +842,8 @@ const server = serve({
         });
         return response;
       } catch (err: any) {
-        console.error("Error queuing collection deletion:", err);
+        const totalDuration = performance.now() - startTime;
+        console.error(`[${new Date().toISOString()}] [PERF] Error queuing collection deletion (${totalDuration.toFixed(2)}ms):`, err);
         const response = Response.json(
           { success: false, message: err?.message || "Failed to queue collection deletion" },
           { status: 500 }
