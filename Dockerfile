@@ -23,12 +23,19 @@ FROM debian:bookworm-slim
 # Install yt-dlp and dependencies
 # Using Python and pip for yt-dlp to get latest version
 # ffmpeg is required for merging video/audio streams
+# cron for scheduled downloads
+# curl and unzip for installing Bun
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     ffmpeg \
     ca-certificates \
+    cron \
+    curl \
+    unzip \
     && pip3 install --break-system-packages yt-dlp \
+    && curl -fsSL https://bun.sh/install | bash \
+    && mv /root/.bun/bin/bun /usr/local/bin/bun \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,6 +48,17 @@ WORKDIR /app
 COPY --from=builder /app/youtube-dl-server ./
 COPY --from=builder /app/public ./public/
 
+# Copy source files needed for schedule checker (scheduler.ts)
+COPY src/scheduler.ts ./src/scheduler.ts
+
+# Copy schedule checking script to app directory
+COPY scripts/check-schedules.js ./check-schedules.js
+RUN chmod +x ./check-schedules.js
+
+# Copy entrypoint script
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Server listens on port 80
 ENV PORT=80
 
@@ -49,6 +67,11 @@ EXPOSE 80
 
 # Create volume mount point
 VOLUME ["/downloads"]
+
+# Set up cron job to check schedules every minute
+RUN echo "* * * * * cd /app && /usr/local/bin/bun check-schedules.js >> /var/log/schedule-check.log 2>&1" | crontab -
+
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Run the server
 CMD ["./youtube-dl-server"]
