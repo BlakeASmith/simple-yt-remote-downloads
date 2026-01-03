@@ -21,6 +21,34 @@ import { Badge, Button, Card, Checkbox, Input, Modal, Radio, Select, Toast, cx }
 type Page = "downloads" | "tracking";
 type TrackingTab = "videos" | "channels" | "playlists";
 
+function getPageFromHash(): Page | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.location.hash.replace(/^#/, "");
+  const base = raw.split("/")[0];
+  if (base === "tracking") return "tracking";
+  if (base === "downloads") return "downloads";
+  return null;
+}
+
+function getTrackingTabFromHash(): TrackingTab | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.location.hash.replace(/^#/, "");
+  const [base, maybeTab] = raw.split("/");
+  if (base !== "tracking") return null;
+  if (maybeTab === "videos" || maybeTab === "channels" || maybeTab === "playlists") return maybeTab;
+  return null;
+}
+
+function getTrackingHashFromStorage(): string {
+  try {
+    const t = window.localStorage.getItem("yt_tracking_tab");
+    if (t === "channels" || t === "playlists") return `#tracking/${t}`;
+  } catch {
+    // ignore
+  }
+  return "#tracking";
+}
+
 function useInterval(fn: () => void, ms: number | null) {
   const fnRef = useRef(fn);
   fnRef.current = fn;
@@ -44,10 +72,33 @@ function SectionHeader(props: { title: string; subtitle?: string; right?: React.
 }
 
 export function App() {
-  const [page, setPage] = useState<Page>("downloads");
+  const [page, setPage] = useState<Page>(() => getPageFromHash() || "downloads");
   const [toast, setToast] = useState<{ tone: "good" | "bad"; message: string } | null>(null);
 
   const showToast = (tone: "good" | "bad", message: string) => setToast({ tone, message });
+
+  // Hash-based routing so refresh stays on the same page (e.g. "#tracking").
+  useEffect(() => {
+    const onHashChange = () => {
+      const fromHash = getPageFromHash();
+      if (fromHash) setPage(fromHash);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  // Keep the URL in sync with the current page, without blowing away a tracking sub-tab hash.
+  useEffect(() => {
+    if (page === "tracking") {
+      if (!window.location.hash.startsWith("#tracking")) {
+        window.history.replaceState(null, "", getTrackingHashFromStorage());
+      }
+      return;
+    }
+    if (window.location.hash !== "#downloads") {
+      window.history.replaceState(null, "", "#downloads");
+    }
+  }, [page]);
 
   return (
     <div className="min-h-dvh bg-zinc-950 text-white">
@@ -63,10 +114,22 @@ export function App() {
             </div>
           </div>
           <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col">
-            <Button className="w-full" variant={page === "downloads" ? "primary" : "ghost"} onClick={() => setPage("downloads")}>
+            <Button
+              className="w-full"
+              variant={page === "downloads" ? "primary" : "ghost"}
+              onClick={() => {
+                window.location.hash = "#downloads";
+              }}
+            >
               Downloads
             </Button>
-            <Button className="w-full" variant={page === "tracking" ? "primary" : "ghost"} onClick={() => setPage("tracking")}>
+            <Button
+              className="w-full"
+              variant={page === "tracking" ? "primary" : "ghost"}
+              onClick={() => {
+                window.location.hash = getTrackingHashFromStorage();
+              }}
+            >
               Tracking
             </Button>
           </div>
@@ -759,7 +822,7 @@ function EditScheduleModal(props: {
 }
 
 function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string) => void }) {
-  const [tab, setTab] = useState<TrackingTab>("videos");
+  const [tab, setTab] = useState<TrackingTab>(() => getTrackingTabFromHash() || "videos");
   const [downloads, setDownloads] = useState<DownloadStatus[]>([]);
   const [stats, setStats] = useState<TrackerStats | null>(null);
   const [videos, setVideos] = useState<TrackedVideo[]>([]);
@@ -767,6 +830,29 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
   const [playlists, setPlaylists] = useState<TrackedPlaylist[]>([]);
   const [q, setQ] = useState("");
   const [logsById, setLogsById] = useState<Record<string, { loading: boolean; log?: string; error?: string }>>({});
+
+  // Keep tracking tab in the hash so refresh/back keeps your place.
+  useEffect(() => {
+    if (!window.location.hash.startsWith("#tracking")) return;
+    const desired = tab === "videos" ? "#tracking" : `#tracking/${tab}`;
+    if (window.location.hash !== desired) window.history.replaceState(null, "", desired);
+    try {
+      window.localStorage.setItem("yt_tracking_tab", tab);
+    } catch {
+      // ignore
+    }
+  }, [tab]);
+
+  // Respond to back/forward changes between tracking tabs.
+  useEffect(() => {
+    const onHashChange = () => {
+      const fromHash = getTrackingTabFromHash();
+      if (fromHash) setTab(fromHash);
+      if (window.location.hash === "#tracking") setTab("videos");
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   async function ensureLogs(id: string) {
     setLogsById((prev) => {
@@ -861,7 +947,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                   </div>
                   <div className="mt-1 grid gap-1 text-xs text-white/55">
                     <div className="truncate">{d.channel ? `Channel: ${d.channel}` : d.url}</div>
-                    <div className="truncate">Output: {d.outputPath}</div>
+                    <div className="hidden truncate sm:block">Output: {d.outputPath}</div>
                     {d.finalFile || d.currentFile ? (
                       <div className="truncate">
                         File: {d.finalFile || d.currentFile}
@@ -906,7 +992,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
 
         <div className="md:col-span-3 grid gap-4">
           <Card title="Stats">
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Videos" value={stats?.totalVideos ?? 0} />
               <Stat label="Channels" value={stats?.totalChannels ?? 0} />
               <Stat label="Playlists" value={stats?.totalPlaylists ?? 0} />
@@ -952,7 +1038,11 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                               {v.channel} · {v.relativePath}
                             </div>
                             <div className="mt-1 text-xs text-white/55">
-                              File: {v.fullPath ? v.fullPath.split("/").pop() : "unknown"} · <span className="break-all">{v.fullPath}</span>
+                              File: {v.fullPath ? v.fullPath.split("/").pop() : "unknown"}
+                              <span className="hidden sm:inline">
+                                {" "}
+                                · <span className="break-all">{v.fullPath}</span>
+                              </span>
                             </div>
                             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
                               <span>Size: {formatBytes(v.fileSize)}</span>
