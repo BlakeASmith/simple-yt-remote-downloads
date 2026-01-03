@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
+import { Database } from "bun:sqlite";
 
-export const SCHEDULES_FILE = "/downloads/.schedules.json";
+export const SCHEDULES_DB = "/downloads/.schedules.db";
 
 export interface Schedule {
   id: string;
@@ -25,34 +26,49 @@ export interface Schedule {
 }
 
 /**
- * Load schedules from disk
+ * Initialize the schedules database
  */
-export function loadSchedules(): Schedule[] {
-  try {
-    if (existsSync(SCHEDULES_FILE)) {
-      const data = readFileSync(SCHEDULES_FILE, "utf-8");
-      return JSON.parse(data);
-    }
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error loading schedules:`, error);
+function initSchedulesDatabase(): Database {
+  // Ensure downloads directory exists
+  const downloadsDir = SCHEDULES_DB.substring(0, SCHEDULES_DB.lastIndexOf("/"));
+  if (!existsSync(downloadsDir)) {
+    mkdirSync(downloadsDir, { recursive: true });
   }
-  return [];
-}
 
-/**
- * Save schedules to disk
- */
-export function saveSchedules(schedules: Schedule[]): void {
-  try {
-    // Ensure downloads directory exists
-    const downloadsDir = SCHEDULES_FILE.substring(0, SCHEDULES_FILE.lastIndexOf("/"));
-    if (!existsSync(downloadsDir)) {
-      mkdirSync(downloadsDir, { recursive: true });
-    }
-    writeFileSync(SCHEDULES_FILE, JSON.stringify(schedules, null, 2), "utf-8");
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] Error saving schedules:`, error);
-  }
+  const db = new Database(SCHEDULES_DB);
+  
+  // Create schedules table if it doesn't exist
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schedules (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      path TEXT,
+      collectionId TEXT,
+      audioOnly INTEGER DEFAULT 0,
+      resolution TEXT,
+      isPlaylist INTEGER DEFAULT 0,
+      isChannel INTEGER DEFAULT 0,
+      maxVideos INTEGER,
+      intervalMinutes INTEGER NOT NULL,
+      lastRun INTEGER,
+      nextRun INTEGER NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      createdAt INTEGER NOT NULL,
+      includeThumbnail INTEGER DEFAULT 0,
+      includeTranscript INTEGER DEFAULT 0,
+      excludeShorts INTEGER DEFAULT 0,
+      useArchiveFile INTEGER DEFAULT 0,
+      concurrentFragments INTEGER
+    )
+  `);
+
+  // Create index for better query performance
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
+    CREATE INDEX IF NOT EXISTS idx_schedules_nextRun ON schedules(nextRun);
+  `);
+
+  return db;
 }
 
 /**
@@ -70,10 +86,61 @@ export function calculateNextRun(intervalMinutes: number): number {
 }
 
 class Scheduler {
-  private schedules: Schedule[] = [];
+  private db: Database;
+  private insertStmt: ReturnType<Database["prepare"]>;
+  private getAllStmt: ReturnType<Database["prepare"]>;
+  private getByIdStmt: ReturnType<Database["prepare"]>;
+  private updateStmt: ReturnType<Database["prepare"]>;
+  private deleteStmt: ReturnType<Database["prepare"]>;
 
   constructor() {
-    this.schedules = loadSchedules();
+    this.db = initSchedulesDatabase();
+    
+    // Prepare statements for better performance
+    this.insertStmt = this.db.prepare(`
+      INSERT INTO schedules (
+        id, url, path, collectionId, audioOnly, resolution, isPlaylist, isChannel,
+        maxVideos, intervalMinutes, lastRun, nextRun, enabled, createdAt,
+        includeThumbnail, includeTranscript, excludeShorts, useArchiveFile, concurrentFragments
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    this.getAllStmt = this.db.prepare(`
+      SELECT * FROM schedules ORDER BY createdAt DESC
+    `);
+    
+    this.getByIdStmt = this.db.prepare(`
+      SELECT * FROM schedules WHERE id = ?
+    `);
+    
+    // Note: We'll build dynamic UPDATE statements for partial updates
+    // For now, prepare a full update statement
+    this.updateStmt = this.db.prepare(`
+      UPDATE schedules
+      SET url = ?,
+          path = ?,
+          collectionId = ?,
+          audioOnly = ?,
+          resolution = ?,
+          isPlaylist = ?,
+          isChannel = ?,
+          maxVideos = ?,
+          intervalMinutes = ?,
+          lastRun = ?,
+          nextRun = ?,
+          enabled = ?,
+          includeThumbnail = ?,
+          includeTranscript = ?,
+          excludeShorts = ?,
+          useArchiveFile = ?,
+          concurrentFragments = ?
+      WHERE id = ?
+    `);
+    
+    this.deleteStmt = this.db.prepare(`
+      DELETE FROM schedules WHERE id = ?
+    `);
   }
 
   /**
@@ -87,70 +154,134 @@ class Scheduler {
       createdAt: Date.now(),
     };
 
-    this.schedules.push(schedule);
-    saveSchedules(this.schedules);
+    this.insertStmt.run(
+      schedule.id,
+      schedule.url,
+      schedule.path ?? null,
+      schedule.collectionId ?? null,
+      schedule.audioOnly ? 1 : 0,
+      schedule.resolution ?? null,
+      schedule.isPlaylist ? 1 : 0,
+      schedule.isChannel ? 1 : 0,
+      schedule.maxVideos ?? null,
+      schedule.intervalMinutes,
+      schedule.lastRun ?? null,
+      schedule.nextRun,
+      schedule.enabled ? 1 : 0,
+      schedule.createdAt,
+      schedule.includeThumbnail ? 1 : 0,
+      schedule.includeTranscript ? 1 : 0,
+      schedule.excludeShorts ? 1 : 0,
+      schedule.useArchiveFile ? 1 : 0,
+      schedule.concurrentFragments ?? null
+    );
     
     console.log(`[${new Date().toISOString()}] Created schedule: ${schedule.id}`);
     return schedule;
   }
 
   /**
-   * Get all schedules (reloads from disk to ensure freshness)
+   * Get all schedules
    */
   getAllSchedules(): Schedule[] {
-    this.schedules = loadSchedules();
-    return [...this.schedules];
+    const rows = this.getAllStmt.all() as Array<any>;
+    return rows.map(row => this.rowToSchedule(row));
   }
 
   /**
-   * Get a schedule by ID (reloads from disk to ensure freshness)
+   * Get a schedule by ID
    */
   getSchedule(id: string): Schedule | undefined {
-    this.schedules = loadSchedules();
-    return this.schedules.find(s => s.id === id);
+    const row = this.getByIdStmt.get(id) as any;
+    if (!row) return undefined;
+    return this.rowToSchedule(row);
   }
 
   /**
    * Update a schedule
    */
   updateSchedule(id: string, updates: Partial<Omit<Schedule, "id" | "createdAt">>): Schedule | null {
-    // Reload from disk first
-    this.schedules = loadSchedules();
-    const index = this.schedules.findIndex(s => s.id === id);
-    if (index === -1) {
+    const existing = this.getSchedule(id);
+    if (!existing) {
       return null;
     }
 
-    const schedule = this.schedules[index];
-    
+    // Merge updates with existing values
+    const merged: Schedule = {
+      ...existing,
+      ...updates,
+    };
+
     // If interval changed, recalculate next run
-    if (updates.intervalMinutes !== undefined && updates.intervalMinutes !== schedule.intervalMinutes) {
-      updates.nextRun = calculateNextRun(updates.intervalMinutes);
+    if (updates.intervalMinutes !== undefined && updates.intervalMinutes !== existing.intervalMinutes) {
+      merged.nextRun = calculateNextRun(updates.intervalMinutes);
     }
 
-    this.schedules[index] = { ...schedule, ...updates };
-    saveSchedules(this.schedules);
+    this.updateStmt.run(
+      merged.url,
+      merged.path ?? null,
+      merged.collectionId ?? null,
+      merged.audioOnly ? 1 : 0,
+      merged.resolution ?? null,
+      merged.isPlaylist ? 1 : 0,
+      merged.isChannel ? 1 : 0,
+      merged.maxVideos ?? null,
+      merged.intervalMinutes,
+      merged.lastRun ?? null,
+      merged.nextRun,
+      merged.enabled ? 1 : 0,
+      merged.includeThumbnail ? 1 : 0,
+      merged.includeTranscript ? 1 : 0,
+      merged.excludeShorts ? 1 : 0,
+      merged.useArchiveFile ? 1 : 0,
+      merged.concurrentFragments ?? null,
+      id
+    );
     
     console.log(`[${new Date().toISOString()}] Updated schedule: ${id}`);
-    return this.schedules[index];
+    return this.getSchedule(id)!;
   }
 
   /**
    * Delete a schedule
    */
   deleteSchedule(id: string): boolean {
-    // Reload from disk first
-    this.schedules = loadSchedules();
-    const index = this.schedules.findIndex(s => s.id === id);
-    if (index === -1) {
+    const existing = this.getSchedule(id);
+    if (!existing) {
       return false;
     }
 
-    this.schedules.splice(index, 1);
-    saveSchedules(this.schedules);
+    this.deleteStmt.run(id);
     
     console.log(`[${new Date().toISOString()}] Deleted schedule: ${id}`);
     return true;
+  }
+
+  /**
+   * Convert a database row to Schedule
+   */
+  private rowToSchedule(row: any): Schedule {
+    return {
+      id: row.id,
+      url: row.url,
+      path: row.path ?? undefined,
+      collectionId: row.collectionId ?? undefined,
+      audioOnly: !!row.audioOnly,
+      resolution: row.resolution as "1080" | "720" | undefined,
+      isPlaylist: !!row.isPlaylist,
+      isChannel: !!row.isChannel,
+      maxVideos: row.maxVideos ?? undefined,
+      intervalMinutes: row.intervalMinutes,
+      lastRun: row.lastRun ?? undefined,
+      nextRun: row.nextRun,
+      enabled: !!row.enabled,
+      createdAt: row.createdAt,
+      includeThumbnail: row.includeThumbnail ? true : undefined,
+      includeTranscript: row.includeTranscript ? true : undefined,
+      excludeShorts: row.excludeShorts ? true : undefined,
+      useArchiveFile: row.useArchiveFile ? true : undefined,
+      concurrentFragments: row.concurrentFragments ?? undefined,
+    };
   }
 }
 
