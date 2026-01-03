@@ -21,6 +21,7 @@ export interface DownloadOptions {
   excludeShorts?: boolean;
   collectionId?: string;
   useArchiveFile?: boolean; // If false, download without archive file (allows multiple versions)
+  concurrentFragments?: number; // Number of fragments to download in parallel (yt-dlp --concurrent-fragments)
 }
 
 export interface DownloadResult {
@@ -371,7 +372,7 @@ function getArchiveFilePath(options: DownloadOptions): string | null {
  * Build yt-dlp arguments based on download options
  */
 function buildYtDlpArgs(options: DownloadOptions): string[] {
-  const { url, outputPath, audioOnly, resolution, isPlaylist, isChannel, maxVideos, includeThumbnail, includeTranscript, excludeShorts } = options;
+  const { url, outputPath, audioOnly, resolution, isPlaylist, isChannel, maxVideos, includeThumbnail, includeTranscript, excludeShorts, concurrentFragments } = options;
 
   // Set defaults: video includes thumbnail and transcript, audio only does not
   const shouldIncludeThumbnail = includeThumbnail !== undefined 
@@ -397,6 +398,12 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
     // Make progress machine-readable (one update per line)
     "--newline",
   ];
+
+  // Add parallel chunk download support (concurrent fragments)
+  // Default to 4 fragments if not specified (reasonable balance between speed and resource usage)
+  // This enables parallel chunk downloads by default for faster downloads
+  const fragments = concurrentFragments !== undefined ? concurrentFragments : 4;
+  args.push("--concurrent-fragments", fragments.toString());
 
   // Add archive file if enabled
   const archiveFile = getArchiveFilePath(options);

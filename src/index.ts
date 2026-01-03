@@ -23,6 +23,7 @@ interface DownloadRequest {
   includeTranscript?: boolean;
   excludeShorts?: boolean;
   useArchiveFile?: boolean;
+  concurrentFragments?: number;
 }
 
 /**
@@ -163,6 +164,7 @@ async function handleDownloadRequest(req: Request): Promise<Response> {
       excludeShorts: body.excludeShorts,
       collectionId: body.collectionId,
       useArchiveFile: body.useArchiveFile,
+      concurrentFragments: body.concurrentFragments,
     });
 
     return Response.json(result, { status: 202 });
@@ -245,7 +247,7 @@ const server = serve({
     if (pathname === "/api/schedules" && req.method === "POST") {
       try {
         const body = await req.json();
-        const { url, path, collectionId, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes, includeThumbnail, includeTranscript, excludeShorts, useArchiveFile } = body;
+        const { url, path, collectionId, audioOnly, resolution, isPlaylist, isChannel, maxVideos, intervalMinutes, includeThumbnail, includeTranscript, excludeShorts, useArchiveFile, concurrentFragments } = body;
 
         if (!url || !intervalMinutes || intervalMinutes < 1) {
           const response = Response.json(
@@ -314,6 +316,7 @@ const server = serve({
           includeTranscript,
           excludeShorts,
           useArchiveFile,
+          concurrentFragments,
         });
 
         const response = Response.json({ success: true, schedule });
