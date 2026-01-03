@@ -303,16 +303,6 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
 
   return (
     <div className="grid gap-6">
-      <SectionHeader
-        title="Queue a download"
-        subtitle="Paste a URL (video / playlist / channel). Defaults are optimized for speed."
-        right={
-          <Button variant="ghost" onClick={() => setCollectionsOpen(true)}>
-            Manage collections
-          </Button>
-        }
-      />
-
       <Card>
         <div className="grid gap-4">
           <div className="grid gap-2">
@@ -331,7 +321,12 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
 
           <div className="grid gap-3 md:grid-cols-3">
             <div className="grid gap-2">
-              <div className="text-sm font-semibold text-white/85">Collection</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold text-white/85">Collection</div>
+                <Button variant="ghost" className="text-xs" onClick={() => setCollectionsOpen(true)}>
+                  Manage
+                </Button>
+              </div>
               <Select value={collectionId} onChange={(e) => setCollectionId(e.target.value)}>
                 <option value="">None (downloads root)</option>
                 {collections.map((c) => (
