@@ -21,6 +21,7 @@ export interface DownloadResult {
 
 /**
  * Extract channel ID from various YouTube channel URL formats
+ * Returns channel ID if found, or null if not a channel format
  */
 export function extractChannelId(input: string): string | null {
   if (!input) return null;
@@ -33,30 +34,50 @@ export function extractChannelId(input: string): string | null {
   // Try to extract from URL
   try {
     const url = new URL(input);
+    const pathname = url.pathname;
     
     // Format: youtube.com/channel/UCxxxxx
-    const channelMatch = url.pathname.match(/^\/channel\/(UC[\w-]{22})/);
-    if (channelMatch) {
+    const channelMatch = pathname.match(/^\/channel\/(UC[\w-]{22})/);
+    if (channelMatch?.[1]) {
       return channelMatch[1];
     }
     
     // Format: youtube.com/c/ChannelName or youtube.com/@ChannelName
-    // For these, we'll need to resolve them via yt-dlp
-    if (url.pathname.match(/^\/(c|user|@)\//)) {
-      return input; // Return the full URL for yt-dlp to resolve
+    // Return full URL for yt-dlp to resolve
+    if (pathname.match(/^\/(c|user|@)\//)) {
+      return input;
     }
   } catch {
-    // Not a valid URL, might be a channel ID or handle
+    // Not a valid URL, might be a handle
     if (input.startsWith('@')) {
       return `https://www.youtube.com/${input}`;
-    }
-    // Try as channel ID
-    if (/^UC[\w-]{22}$/.test(input)) {
-      return input;
     }
   }
   
   return null;
+}
+
+/**
+ * Build channel URL from various input formats
+ */
+function buildChannelUrl(input: string): string {
+  // Already a full URL
+  if (input.startsWith('http')) {
+    return input;
+  }
+  
+  // Channel ID (UCxxxxx)
+  if (input.startsWith('UC') && input.length === 24) {
+    return `https://www.youtube.com/channel/${input}`;
+  }
+  
+  // Handle format (@channelname)
+  if (input.startsWith('@')) {
+    return `https://www.youtube.com/${input}`;
+  }
+  
+  // Assume it's a handle without @
+  return `https://www.youtube.com/@${input}`;
 }
 
 /**
@@ -66,18 +87,7 @@ export async function getChannelName(channelInput: string): Promise<string | nul
   try {
     console.log(`[${new Date().toISOString()}] Attempting to get channel name from: ${channelInput}`);
     
-    // Build channel URL if we have a channel ID
-    let channelUrl = channelInput;
-    if (channelInput.startsWith('UC') && !channelInput.includes('youtube.com')) {
-      channelUrl = `https://www.youtube.com/channel/${channelInput}`;
-    } else if (!channelInput.startsWith('http')) {
-      // Assume it's a handle or channel name
-      if (channelInput.startsWith('@')) {
-        channelUrl = `https://www.youtube.com/${channelInput}`;
-      } else {
-        channelUrl = `https://www.youtube.com/@${channelInput}`;
-      }
-    }
+    const channelUrl = buildChannelUrl(channelInput);
     
     // Use yt-dlp to extract channel name
     const proc = Bun.spawn({
@@ -179,39 +189,7 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
   const outputTemplate = join(normalizedPath, "%(title)s [%(id)s].%(ext)s");
 
   // Build channel URL if needed
-  let finalUrl = url;
-  if (isChannel) {
-    // If already a full URL, use it as-is
-    if (url.startsWith('http')) {
-      finalUrl = url;
-    } else {
-      // Extract channel ID or handle
-      const channelId = extractChannelId(url);
-      if (channelId) {
-        // If extractChannelId returned a full URL, use it
-        if (channelId.startsWith('http')) {
-          finalUrl = channelId;
-        } else if (channelId.startsWith('UC')) {
-          // It's a channel ID
-          finalUrl = `https://www.youtube.com/channel/${channelId}`;
-        } else {
-          // It's a handle or something else, use original logic
-          if (url.startsWith('@')) {
-            finalUrl = `https://www.youtube.com/${url}`;
-          } else {
-            finalUrl = `https://www.youtube.com/@${url}`;
-          }
-        }
-      } else {
-        // Fallback: assume it's a handle
-        if (url.startsWith('@')) {
-          finalUrl = `https://www.youtube.com/${url}`;
-        } else {
-          finalUrl = `https://www.youtube.com/@${url}`;
-        }
-      }
-    }
-  }
+  const finalUrl = isChannel ? buildChannelUrl(url) : url;
 
   const args: string[] = [
     finalUrl,
