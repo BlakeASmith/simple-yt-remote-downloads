@@ -306,6 +306,12 @@
   <div class="container">
     <h1>📺 YouTube Downloader</h1>
     
+    <div style="display: flex; gap: 1rem; margin-bottom: 2rem; justify-content: center;">
+      <button id="navDownloads" class="btn-small btn-edit" onclick="showPage('downloads')" style="width: auto;">Downloads</button>
+      <button id="navTracking" class="btn-small btn-edit" onclick="showPage('tracking')" style="width: auto;">Tracked Content</button>
+    </div>
+    
+    <div id="downloadsPage">
     <div class="card">
       <form id="downloadForm">
         <div class="form-group">
@@ -441,6 +447,45 @@
       <div id="schedulesList">
         <div style="text-align: center; color: #b4b4b4; padding: 2rem;">
           Loading schedules...
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <div id="trackingPage" class="hidden">
+      <div class="card">
+        <h2 style="margin-bottom: 1.5rem; font-size: 1.5rem;">📊 Download Statistics</h2>
+        <div id="statsDisplay" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+          <div style="background: rgba(0, 0, 0, 0.2); padding: 1.5rem; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: bold; color: #4a9eff;" id="statTotalVideos">-</div>
+            <div style="color: #b4b4b4; margin-top: 0.5rem;">Total Videos</div>
+          </div>
+          <div style="background: rgba(0, 0, 0, 0.2); padding: 1.5rem; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: bold; color: #2ed573;" id="statTotalChannels">-</div>
+            <div style="color: #b4b4b4; margin-top: 0.5rem;">Channels</div>
+          </div>
+          <div style="background: rgba(0, 0, 0, 0.2); padding: 1.5rem; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: bold; color: #6c5ce7;" id="statTotalPlaylists">-</div>
+            <div style="color: #b4b4b4; margin-top: 0.5rem;">Playlists</div>
+          </div>
+          <div style="background: rgba(0, 0, 0, 0.2); padding: 1.5rem; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: bold; color: #ffa502;" id="statTotalSize">-</div>
+            <div style="color: #b4b4b4; margin-top: 0.5rem;">Total Size</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 2rem;">
+        <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+          <button class="btn-small btn-edit" onclick="showTrackingTab('videos')" id="tabVideos">Videos</button>
+          <button class="btn-small btn-edit" onclick="showTrackingTab('channels')" id="tabChannels">Channels</button>
+          <button class="btn-small btn-edit" onclick="showTrackingTab('playlists')" id="tabPlaylists">Playlists</button>
+        </div>
+        
+        <div id="trackingContent">
+          <div style="text-align: center; color: #b4b4b4; padding: 2rem;">
+            Loading tracked content...
+          </div>
         </div>
       </div>
     </div>
@@ -1111,11 +1156,186 @@
     window.cancelEdit = cancelEdit;
     window.deleteSchedule = deleteSchedule;
 
+    // Page navigation
+    function showPage(page) {
+      if (page === 'downloads') {
+        document.getElementById('downloadsPage').classList.remove('hidden');
+        document.getElementById('trackingPage').classList.add('hidden');
+        document.getElementById('navDownloads').classList.add('btn-toggle');
+        document.getElementById('navTracking').classList.remove('btn-toggle');
+      } else if (page === 'tracking') {
+        document.getElementById('downloadsPage').classList.add('hidden');
+        document.getElementById('trackingPage').classList.remove('hidden');
+        document.getElementById('navDownloads').classList.remove('btn-toggle');
+        document.getElementById('navTracking').classList.add('btn-toggle');
+        loadTrackingData();
+      }
+    }
+
+    // Tracking tab navigation
+    let currentTrackingTab = 'videos';
+    function showTrackingTab(tab) {
+      currentTrackingTab = tab;
+      document.getElementById('tabVideos').classList.remove('btn-toggle');
+      document.getElementById('tabChannels').classList.remove('btn-toggle');
+      document.getElementById('tabPlaylists').classList.remove('btn-toggle');
+      document.getElementById(`tab${tab.charAt(0).toUpperCase() + tab.slice(1)}`).classList.add('btn-toggle');
+      renderTrackingContent();
+    }
+
+    // Format file size
+    function formatFileSize(bytes) {
+      if (!bytes || bytes === 0) return 'Unknown';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+
+    // Format duration
+    function formatDuration(seconds) {
+      if (!seconds) return 'Unknown';
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      }
+      return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    // Load tracking data
+    async function loadTrackingData() {
+      try {
+        const response = await fetch('/api/tracker/all');
+        const data = await response.json();
+        
+        if (data.success) {
+          window.trackingData = data;
+          updateStats(data.stats);
+          renderTrackingContent();
+        } else {
+          document.getElementById('trackingContent').innerHTML = '<div style="text-align: center; color: #ff4757; padding: 2rem;">Failed to load tracking data</div>';
+        }
+      } catch (err) {
+        document.getElementById('trackingContent').innerHTML = '<div style="text-align: center; color: #ff4757; padding: 2rem;">Failed to connect to server</div>';
+      }
+    }
+
+    // Update statistics display
+    function updateStats(stats) {
+      document.getElementById('statTotalVideos').textContent = stats.totalVideos || 0;
+      document.getElementById('statTotalChannels').textContent = stats.totalChannels || 0;
+      document.getElementById('statTotalPlaylists').textContent = stats.totalPlaylists || 0;
+      document.getElementById('statTotalSize').textContent = formatFileSize(stats.totalSize || 0);
+    }
+
+    // Render tracking content based on current tab
+    function renderTrackingContent() {
+      if (!window.trackingData) {
+        document.getElementById('trackingContent').innerHTML = '<div style="text-align: center; color: #b4b4b4; padding: 2rem;">No data available</div>';
+        return;
+      }
+
+      const content = document.getElementById('trackingContent');
+      
+      if (currentTrackingTab === 'videos') {
+        const videos = window.trackingData.videos || [];
+        if (videos.length === 0) {
+          content.innerHTML = '<div style="text-align: center; color: #b4b4b4; padding: 2rem;">No videos tracked yet</div>';
+          return;
+        }
+        
+        // Sort by download date (newest first)
+        videos.sort((a, b) => (b.downloadedAt || 0) - (a.downloadedAt || 0));
+        
+        content.innerHTML = videos.map(video => `
+          <div class="schedule-item" style="${video.deleted ? 'opacity: 0.6;' : ''}">
+            <div class="schedule-header">
+              <div class="schedule-info">
+                <div class="schedule-title">
+                  ${video.deleted ? '🗑️ ' : '🎥 '}${video.title}
+                  ${video.deleted ? '<span class="schedule-status status-disabled">Deleted</span>' : ''}
+                </div>
+                <div class="schedule-url">${video.url}</div>
+                <div class="schedule-details">
+                  <span>Channel: ${video.channel}</span>
+                  <span>Format: ${video.format === 'audio' ? 'Audio (MP3)' : `Video (${video.resolution || 'N/A'}p)`}</span>
+                  <span>Path: ${video.relativePath}</span>
+                  ${video.fileSize ? `<span>Size: ${formatFileSize(video.fileSize)}</span>` : ''}
+                  ${video.duration ? `<span>Duration: ${formatDuration(video.duration)}</span>` : ''}
+                  <span>Downloaded: ${formatTime(video.downloadedAt)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `).join('');
+      } else if (currentTrackingTab === 'channels') {
+        const channels = window.trackingData.channels || [];
+        if (channels.length === 0) {
+          content.innerHTML = '<div style="text-align: center; color: #b4b4b4; padding: 2rem;">No channels tracked yet</div>';
+          return;
+        }
+        
+        channels.sort((a, b) => (b.lastDownloadedAt || b.downloadedAt || 0) - (a.lastDownloadedAt || a.downloadedAt || 0));
+        
+        content.innerHTML = channels.map(channel => `
+          <div class="schedule-item">
+            <div class="schedule-header">
+              <div class="schedule-info">
+                <div class="schedule-title">📺 ${channel.channelName}</div>
+                <div class="schedule-url">${channel.url}</div>
+                <div class="schedule-details">
+                  <span>Path: ${channel.relativePath}</span>
+                  <span>Videos: ${channel.videoCount}</span>
+                  ${channel.maxVideos ? `<span>Max videos: ${channel.maxVideos}</span>` : ''}
+                  <span>First downloaded: ${formatTime(channel.downloadedAt)}</span>
+                  ${channel.lastDownloadedAt ? `<span>Last downloaded: ${formatTime(channel.lastDownloadedAt)}</span>` : ''}
+                </div>
+              </div>
+            </div>
+          </div>
+        `).join('');
+      } else if (currentTrackingTab === 'playlists') {
+        const playlists = window.trackingData.playlists || [];
+        if (playlists.length === 0) {
+          content.innerHTML = '<div style="text-align: center; color: #b4b4b4; padding: 2rem;">No playlists tracked yet</div>';
+          return;
+        }
+        
+        playlists.sort((a, b) => (b.lastDownloadedAt || b.downloadedAt || 0) - (a.lastDownloadedAt || a.downloadedAt || 0));
+        
+        content.innerHTML = playlists.map(playlist => `
+          <div class="schedule-item">
+            <div class="schedule-header">
+              <div class="schedule-info">
+                <div class="schedule-title">📋 ${playlist.playlistName}</div>
+                <div class="schedule-url">${playlist.url}</div>
+                <div class="schedule-details">
+                  <span>Path: ${playlist.relativePath}</span>
+                  <span>Videos: ${playlist.videoCount}</span>
+                  <span>First downloaded: ${formatTime(playlist.downloadedAt)}</span>
+                  ${playlist.lastDownloadedAt ? `<span>Last downloaded: ${formatTime(playlist.lastDownloadedAt)}</span>` : ''}
+                </div>
+              </div>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+
+    // Make functions available globally
+    window.showPage = showPage;
+    window.showTrackingTab = showTrackingTab;
+
     // Load schedules on page load
     loadSchedules();
     
     // Refresh schedules every 30 seconds
     setInterval(loadSchedules, 30000);
+    
+    // Initialize navigation buttons
+    document.getElementById('navDownloads').classList.add('btn-toggle');
 
   </script>
 </body>

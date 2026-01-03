@@ -1,6 +1,7 @@
 import { serve, file } from "bun";
 import { startDownload, getPlaylistName, getChannelName } from "./downloader";
 import { getScheduler } from "./scheduler";
+import { getTracker } from "./tracker";
 import { join } from "path";
 
 const DOWNLOADS_ROOT = "/downloads";
@@ -332,6 +333,66 @@ const server = serve({
       }
 
       const response = Response.json({ success: true, message: "Schedule deleted" });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    // Tracker API routes
+    if (pathname === "/api/tracker/videos" && req.method === "GET") {
+      const tracker = getTracker();
+      const videos = tracker.getAllVideos();
+      const response = Response.json({ success: true, videos });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    if (pathname === "/api/tracker/channels" && req.method === "GET") {
+      const tracker = getTracker();
+      const channels = tracker.getAllChannels();
+      const response = Response.json({ success: true, channels });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    if (pathname === "/api/tracker/playlists" && req.method === "GET") {
+      const tracker = getTracker();
+      const playlists = tracker.getAllPlaylists();
+      const response = Response.json({ success: true, playlists });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    if (pathname === "/api/tracker/stats" && req.method === "GET") {
+      const tracker = getTracker();
+      const stats = tracker.getStats();
+      const response = Response.json({ success: true, stats });
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        response.headers.set(key, value);
+      });
+      return response;
+    }
+
+    if (pathname === "/api/tracker/all" && req.method === "GET") {
+      const tracker = getTracker();
+      const videos = tracker.getAllVideos();
+      const channels = tracker.getAllChannels();
+      const playlists = tracker.getAllPlaylists();
+      const stats = tracker.getStats();
+      const response = Response.json({
+        success: true,
+        videos,
+        channels,
+        playlists,
+        stats,
+      });
       Object.entries(corsHeaders).forEach(([key, value]) => {
         response.headers.set(key, value);
       });
