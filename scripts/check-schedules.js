@@ -56,6 +56,10 @@ async function checkAndTriggerSchedules() {
           payload.includeTranscript = schedule.includeTranscript;
         }
 
+        if (schedule.excludeShorts !== undefined) {
+          payload.excludeShorts = schedule.excludeShorts;
+        }
+
         // Trigger download via API
         try {
           const response = await fetch(API_URL, {

@@ -16,6 +16,7 @@ export interface DownloadOptions {
   maxVideos?: number;
   includeThumbnail?: boolean;
   includeTranscript?: boolean;
+  excludeShorts?: boolean;
 }
 
 export interface DownloadResult {
@@ -330,7 +331,7 @@ async function getPlaylistVideoIds(url: string, maxVideos?: number): Promise<str
  * Build yt-dlp arguments based on download options
  */
 function buildYtDlpArgs(options: DownloadOptions): string[] {
-  const { url, outputPath, audioOnly, resolution, isPlaylist, isChannel, maxVideos, includeThumbnail, includeTranscript } = options;
+  const { url, outputPath, audioOnly, resolution, isPlaylist, isChannel, maxVideos, includeThumbnail, includeTranscript, excludeShorts } = options;
 
   // Set defaults: video includes thumbnail and transcript, audio only does not
   const shouldIncludeThumbnail = includeThumbnail !== undefined 
@@ -373,6 +374,13 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
   // For channels, limit the number of videos
   if (isChannel && maxVideos && maxVideos > 0) {
     args.push("--playlist-end", maxVideos.toString());
+  }
+
+  // Exclude YouTube Shorts if requested
+  if (excludeShorts && (isChannel || isPlaylist)) {
+    // Match filter: exclude videos where the webpage URL contains '/shorts/'
+    // Using contains operator (*) to check if '/shorts/' is in the URL
+    args.push("--match-filter", "!webpage_url * '/shorts/'");
   }
 
   // Use --yes-playlist for playlists and channels, --no-playlist for single videos
