@@ -348,7 +348,7 @@ const server = serve({
   },
 });
 
-// Initialize scheduler
+// Initialize scheduler (loads schedules from disk)
 getScheduler();
 
 console.log(`YouTube Download Server running on port ${server.port}`);

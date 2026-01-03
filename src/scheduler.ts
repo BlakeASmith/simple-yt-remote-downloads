@@ -1,9 +1,6 @@
-import { startDownload, DownloadOptions } from "./downloader";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
 
-const SCHEDULES_FILE = "/downloads/.schedules.json";
-const DOWNLOADS_ROOT = "/downloads";
+export const SCHEDULES_FILE = "/downloads/.schedules.json";
 
 export interface Schedule {
   id: string;
@@ -24,7 +21,7 @@ export interface Schedule {
 /**
  * Load schedules from disk
  */
-function loadSchedules(): Schedule[] {
+export function loadSchedules(): Schedule[] {
   try {
     if (existsSync(SCHEDULES_FILE)) {
       const data = readFileSync(SCHEDULES_FILE, "utf-8");
@@ -39,7 +36,7 @@ function loadSchedules(): Schedule[] {
 /**
  * Save schedules to disk
  */
-function saveSchedules(schedules: Schedule[]): void {
+export function saveSchedules(schedules: Schedule[]): void {
   try {
     // Ensure downloads directory exists
     const downloadsDir = SCHEDULES_FILE.substring(0, SCHEDULES_FILE.lastIndexOf("/"));
@@ -55,99 +52,22 @@ function saveSchedules(schedules: Schedule[]): void {
 /**
  * Generate a unique ID for a schedule
  */
-function generateScheduleId(): string {
+export function generateScheduleId(): string {
   return `schedule-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
 
 /**
  * Calculate next run time based on interval
  */
-function calculateNextRun(intervalMinutes: number): number {
+export function calculateNextRun(intervalMinutes: number): number {
   return Date.now() + intervalMinutes * 60 * 1000;
 }
 
 class Scheduler {
   private schedules: Schedule[] = [];
-  private checkInterval: Timer | null = null;
-  private checkIntervalMs = 60000; // Check every minute
 
   constructor() {
     this.schedules = loadSchedules();
-    this.start();
-  }
-
-  /**
-   * Start the scheduler
-   */
-  start(): void {
-    if (this.checkInterval) {
-      return; // Already running
-    }
-
-    console.log(`[${new Date().toISOString()}] Starting scheduler with ${this.schedules.length} schedule(s)`);
-    
-    this.checkInterval = setInterval(() => {
-      this.checkAndRunSchedules();
-    }, this.checkIntervalMs);
-
-    // Run immediately on start
-    this.checkAndRunSchedules();
-  }
-
-  /**
-   * Stop the scheduler
-   */
-  stop(): void {
-    if (this.checkInterval) {
-      clearInterval(this.checkInterval);
-      this.checkInterval = null;
-      console.log(`[${new Date().toISOString()}] Scheduler stopped`);
-    }
-  }
-
-  /**
-   * Check schedules and run any that are due
-   */
-  private checkAndRunSchedules(): void {
-    const now = Date.now();
-    let updated = false;
-
-    for (const schedule of this.schedules) {
-      if (!schedule.enabled) {
-        continue;
-      }
-
-      if (now >= schedule.nextRun) {
-        console.log(`[${new Date().toISOString()}] Running scheduled download: ${schedule.id}`);
-        
-        // Prepare download options
-        const outputPath = schedule.path 
-          ? join(DOWNLOADS_ROOT, schedule.path)
-          : join(DOWNLOADS_ROOT, `schedule-${schedule.id}`);
-
-        const downloadOptions: DownloadOptions = {
-          url: schedule.url,
-          outputPath,
-          audioOnly: schedule.audioOnly || false,
-          resolution: schedule.resolution || "1080",
-          isPlaylist: schedule.isPlaylist || false,
-          isChannel: schedule.isChannel || false,
-          maxVideos: schedule.maxVideos,
-        };
-
-        // Start the download
-        startDownload(downloadOptions);
-
-        // Update schedule
-        schedule.lastRun = now;
-        schedule.nextRun = calculateNextRun(schedule.intervalMinutes);
-        updated = true;
-      }
-    }
-
-    if (updated) {
-      saveSchedules(this.schedules);
-    }
   }
 
   /**
@@ -169,16 +89,18 @@ class Scheduler {
   }
 
   /**
-   * Get all schedules
+   * Get all schedules (reloads from disk to ensure freshness)
    */
   getAllSchedules(): Schedule[] {
+    this.schedules = loadSchedules();
     return [...this.schedules];
   }
 
   /**
-   * Get a schedule by ID
+   * Get a schedule by ID (reloads from disk to ensure freshness)
    */
   getSchedule(id: string): Schedule | undefined {
+    this.schedules = loadSchedules();
     return this.schedules.find(s => s.id === id);
   }
 
@@ -186,6 +108,8 @@ class Scheduler {
    * Update a schedule
    */
   updateSchedule(id: string, updates: Partial<Omit<Schedule, "id" | "createdAt">>): Schedule | null {
+    // Reload from disk first
+    this.schedules = loadSchedules();
     const index = this.schedules.findIndex(s => s.id === id);
     if (index === -1) {
       return null;
@@ -209,6 +133,8 @@ class Scheduler {
    * Delete a schedule
    */
   deleteSchedule(id: string): boolean {
+    // Reload from disk first
+    this.schedules = loadSchedules();
     const index = this.schedules.findIndex(s => s.id === id);
     if (index === -1) {
       return false;
