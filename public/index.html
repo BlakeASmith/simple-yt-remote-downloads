@@ -187,6 +187,9 @@
             <input type="checkbox" id="isChannel" name="isChannel">
             <span>Download from Channel</span>
           </label>
+          <div id="channelDetected" class="channel-detected hidden" style="margin-top: 0.5rem; padding: 0.5rem; background: rgba(74, 158, 255, 0.1); border: 1px solid rgba(74, 158, 255, 0.3); border-radius: 6px; color: #4a9eff; font-size: 0.875rem;">
+            ✓ Channel detected - will download newest videos from this channel
+          </div>
           <div id="channelOptions" class="hidden" style="margin-top: 1rem; padding: 1rem; background: rgba(0, 0, 0, 0.2); border-radius: 8px;">
             <div class="form-group" style="margin-bottom: 1rem;">
               <label for="maxVideos">Number of newest videos to download</label>
@@ -274,6 +277,7 @@
     const playlistCheckbox = document.getElementById('isPlaylist');
     const playlistDetected = document.getElementById('playlistDetected');
     const channelCheckbox = document.getElementById('isChannel');
+    const channelDetected = document.getElementById('channelDetected');
     const channelOptions = document.getElementById('channelOptions');
     const pathInput = document.getElementById('path');
     const pathLabel = document.getElementById('pathLabel');
@@ -307,65 +311,156 @@
       return false;
     }
 
-    // Function to update playlist checkbox based on URL
-    function updatePlaylistDetection() {
+    /**
+     * Detect if input is a YouTube channel URL, ID, or handle
+     * Supports:
+     * - https://www.youtube.com/channel/UCxxxxx
+     * - https://www.youtube.com/@channelname
+     * - https://www.youtube.com/c/channelname
+     * - https://www.youtube.com/user/channelname
+     * - @channelname
+     * - UCxxxxx (channel ID)
+     */
+    function isChannelURL(input) {
+      if (!input) return false;
+      
+      const trimmed = input.trim();
+      
+      // Channel handle format
+      if (trimmed.startsWith('@')) {
+        return true;
+      }
+      
+      // Channel ID format (UC followed by 22 characters)
+      if (/^UC[\w-]{22}$/.test(trimmed)) {
+        return true;
+      }
+      
+      // Try to parse as URL
+      try {
+        const url = new URL(trimmed);
+        const pathname = url.pathname.toLowerCase();
+        
+        // Check for channel path
+        if (pathname.startsWith('/channel/') || 
+            pathname.startsWith('/c/') || 
+            pathname.startsWith('/user/') ||
+            pathname.startsWith('/@')) {
+          return true;
+        }
+      } catch (e) {
+        // Not a valid URL, might still be a channel ID or handle
+        if (/^UC[\w-]{22}$/.test(trimmed) || trimmed.startsWith('@')) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
+
+    /**
+     * Update UI based on URL input - detects playlists and channels
+     */
+    function updateUrlDetection() {
       const url = urlInput.value.trim();
       const isPlaylist = isPlaylistURL(url);
+      const isChannel = isChannelURL(url);
       
-      if (isPlaylist) {
-        playlistCheckbox.checked = true;
-        playlistDetected.classList.remove('hidden');
-        playlistCheckbox.removeAttribute('data-manually-checked');
-        // Update path label - will auto-fill with playlist name if empty
-        pathLabel.textContent = 'Download Path (optional - will use playlist name if empty)';
-        pathInput.required = false;
+      // Channel detection takes priority (channels can't be playlists)
+      if (isChannel && !isPlaylist) {
+        // Uncheck playlist if channel detected
+        if (playlistCheckbox.checked && !playlistCheckbox.hasAttribute('data-manually-checked')) {
+          playlistCheckbox.checked = false;
+          playlistDetected.classList.add('hidden');
+        }
+        
+        // Check channel checkbox
+        if (!channelCheckbox.hasAttribute('data-manually-checked')) {
+          channelCheckbox.checked = true;
+          channelDetected.classList.remove('hidden');
+          channelOptions.classList.remove('hidden');
+          pathLabel.textContent = 'Download Path (optional - will use channel name if empty)';
+          urlLabel.textContent = 'Channel URL, Channel ID, or Channel Handle';
+          urlInput.placeholder = '@channelname or https://www.youtube.com/channel/UCxxxxx or https://www.youtube.com/@channelname';
+        }
+      } else if (isPlaylist) {
+        // Uncheck channel if playlist detected
+        if (channelCheckbox.checked && !channelCheckbox.hasAttribute('data-manually-checked')) {
+          channelCheckbox.checked = false;
+          channelDetected.classList.add('hidden');
+          channelOptions.classList.add('hidden');
+        }
+        
+        // Check playlist checkbox
+        if (!playlistCheckbox.hasAttribute('data-manually-checked')) {
+          playlistCheckbox.checked = true;
+          playlistDetected.classList.remove('hidden');
+          pathLabel.textContent = 'Download Path (optional - will use playlist name if empty)';
+          urlLabel.textContent = 'YouTube URL, Video ID, Channel ID, or Channel URL';
+          urlInput.placeholder = 'https://www.youtube.com/watch?v=... or @channelname or channel/UCxxxxx';
+        }
       } else {
-        // Only uncheck if user hasn't manually checked it
-        // This allows users to manually enable playlist mode for non-playlist URLs
+        // Neither detected - reset if not manually set
         if (!playlistCheckbox.hasAttribute('data-manually-checked')) {
           playlistCheckbox.checked = false;
           playlistDetected.classList.add('hidden');
-          // Reset path label
+        }
+        if (!channelCheckbox.hasAttribute('data-manually-checked')) {
+          channelCheckbox.checked = false;
+          channelDetected.classList.add('hidden');
+          channelOptions.classList.add('hidden');
+        }
+        
+        // Reset labels if both are unchecked
+        if (!playlistCheckbox.checked && !channelCheckbox.checked) {
           pathLabel.textContent = 'Download Path (optional, relative to downloads root)';
-          pathInput.required = false;
+          urlLabel.textContent = 'YouTube URL, Video ID, Channel ID, or Channel URL';
+          urlInput.placeholder = 'https://www.youtube.com/watch?v=... or @channelname or channel/UCxxxxx';
         }
       }
     }
 
-    // Auto-detect playlist URLs on input (typing)
-    urlInput.addEventListener('input', updatePlaylistDetection);
+    // Auto-detect URLs on input (typing)
+    urlInput.addEventListener('input', updateUrlDetection);
     
     // Also detect on paste events (with slight delay to allow paste to complete)
     urlInput.addEventListener('paste', () => {
-      setTimeout(updatePlaylistDetection, 10);
+      setTimeout(updateUrlDetection, 10);
     });
 
-    // Track manual checkbox changes
+    // Track manual playlist checkbox changes
     playlistCheckbox.addEventListener('change', (e) => {
       // Don't allow both playlist and channel to be checked
       if (e.target.checked && channelCheckbox.checked) {
         channelCheckbox.checked = false;
+        channelDetected.classList.add('hidden');
         channelOptions.classList.add('hidden');
+        channelCheckbox.removeAttribute('data-manually-checked');
       }
       
-      if (e.target.checked && !isPlaylistURL(urlInput.value.trim())) {
+      const url = urlInput.value.trim();
+      const isPlaylist = isPlaylistURL(url);
+      
+      if (e.target.checked && !isPlaylist) {
+        // Manually checked but URL doesn't match
         e.target.setAttribute('data-manually-checked', 'true');
         playlistDetected.classList.add('hidden');
-        // Update path label - will auto-fill with playlist name if empty
         pathLabel.textContent = 'Download Path (optional - will use playlist name if empty)';
-        pathInput.required = false;
       } else if (!e.target.checked) {
         e.target.removeAttribute('data-manually-checked');
-        if (isPlaylistURL(urlInput.value.trim())) {
+        if (isPlaylist) {
           playlistDetected.classList.remove('hidden');
+        } else {
+          playlistDetected.classList.add('hidden');
         }
-        // Reset path label
-        pathLabel.textContent = 'Download Path (optional, relative to downloads root)';
-        pathInput.required = false;
+        // Reset labels if channel is also unchecked
+        if (!channelCheckbox.checked) {
+          pathLabel.textContent = 'Download Path (optional, relative to downloads root)';
+        }
       } else {
+        // Checked and URL matches
         playlistDetected.classList.remove('hidden');
         pathLabel.textContent = 'Download Path (optional - will use playlist name if empty)';
-        pathInput.required = false;
       }
     });
 
@@ -378,16 +473,30 @@
         playlistCheckbox.removeAttribute('data-manually-checked');
       }
       
+      const url = urlInput.value.trim();
+      const isChannel = isChannelURL(url);
+      
       if (e.target.checked) {
         channelOptions.classList.remove('hidden');
+        if (isChannel && !e.target.hasAttribute('data-manually-checked')) {
+          channelDetected.classList.remove('hidden');
+        } else {
+          channelDetected.classList.add('hidden');
+          e.target.setAttribute('data-manually-checked', 'true');
+        }
         pathLabel.textContent = 'Download Path (optional - will use channel name if empty)';
         urlLabel.textContent = 'Channel URL, Channel ID, or Channel Handle';
         urlInput.placeholder = '@channelname or https://www.youtube.com/channel/UCxxxxx or https://www.youtube.com/@channelname';
       } else {
         channelOptions.classList.add('hidden');
-        pathLabel.textContent = 'Download Path (optional, relative to downloads root)';
-        urlLabel.textContent = 'YouTube URL, Video ID, Channel ID, or Channel URL';
-        urlInput.placeholder = 'https://www.youtube.com/watch?v=... or @channelname or channel/UCxxxxx';
+        channelDetected.classList.add('hidden');
+        e.target.removeAttribute('data-manually-checked');
+        // Reset labels if playlist is also unchecked
+        if (!playlistCheckbox.checked) {
+          pathLabel.textContent = 'Download Path (optional, relative to downloads root)';
+          urlLabel.textContent = 'YouTube URL, Video ID, Channel ID, or Channel URL';
+          urlInput.placeholder = 'https://www.youtube.com/watch?v=... or @channelname or channel/UCxxxxx';
+        }
       }
     });
 
