@@ -1032,21 +1032,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
   const [videos, setVideos] = useState<TrackedVideo[]>([]);
   const [channels, setChannels] = useState<TrackedChannel[]>([]);
   const [playlists, setPlaylists] = useState<TrackedPlaylist[]>([]);
-
-  // Get active downloads from videos that are downloading or pending
-  const activeDownloads = videos
-    .filter(v => v.downloadStatus === "downloading" || v.downloadStatus === "pending")
-    .map(v => ({
-      id: `${v.id}-${v.relativePath}`,
-      url: v.url,
-      title: v.title,
-      channel: v.channel,
-      status: v.downloadStatus === "downloading" ? "downloading" : "processing", // Map to expected status
-      startedAt: v.downloadedAt,
-      outputPath: v.relativePath,
-      format: v.format,
-      resolution: v.resolution,
-    }));
+  const [activeDownloads, setActiveDownloads] = useState<DownloadStatus[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
   const [q, setQ] = useState("");
@@ -1103,6 +1089,13 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
     }
   }
 
+  async function loadActiveDownloads() {
+    const res = await apiGet<{ success: boolean; downloads: DownloadStatus[] }>("/api/downloads/status");
+    if (res.ok && res.data.success) {
+      setActiveDownloads(res.data.downloads || []);
+    }
+  }
+
   async function loadAll() {
     const res = await apiGet<{
       success: true;
@@ -1125,10 +1118,12 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
 
   useEffect(() => {
     loadAll();
+    loadActiveDownloads();
     loadSchedules();
   }, []);
 
   useInterval(() => loadAll(), 5000); // Refresh more frequently to show download status updates
+  useInterval(() => loadActiveDownloads(), 2000); // Refresh active downloads more frequently for real-time updates
   useInterval(() => loadSchedules(), 30_000);
 
   const filtered = useMemo(() => {
@@ -1185,7 +1180,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     className="mt-3 rounded-lg bg-black/20 ring-1 ring-white/10"
                     onToggle={(e) => {
                       const el = e.currentTarget;
-                      if (el.open) void findLogsForVideo(d.id);
+                      if (el.open) void ensureLogs(d.id);
                     }}
                   >
                     <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-white/70 hover:text-white">
