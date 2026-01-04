@@ -974,83 +974,7 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
     resolution: options.audioOnly ? undefined : options.resolution,
   });
 
-  // Extract metadata upfront for all video types
-  let singleVideoMetadata:
-    | { id: string; title: string; channel: string; channelId?: string; duration?: number; playlistId?: string; playlistTitle?: string }
-    | null = null;
-  let fullVideoMetadata: Record<string, any> | null = null;
-  let playlistVideos: Array<{
-    id: string;
-    title: string;
-    channel: string;
-    channelId?: string;
-    duration?: number;
-    playlistId?: string;
-    playlistTitle?: string;
-    fullMetadata: Record<string, any>;
-  }> | null = null;
 
-  // Extract metadata upfront
-  console.log(`[${new Date().toISOString()}] Extracting metadata for: ${options.url}`);
-  statusTracker.updateStatus(downloadId, { status: "downloading_metadata" });
-
-  if (options.isPlaylist || options.isChannel) {
-      // For playlists/channels, get only the metadata for videos that will actually be downloaded
-      playlistVideos = await extractLimitedPlaylistMetadata(options.url, options);
-      if (playlistVideos && playlistVideos.length > 0) {
-        console.log(`[${new Date().toISOString()}] Found ${playlistVideos.length} videos to download from playlist/channel`);
-
-        // Track all videos immediately in the library with pending status
-        const tracker = getTracker();
-        for (const video of playlistVideos) {
-          const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
-          try {
-            await processDownloadedVideo(video.id, videoUrl, options, video, video.fullMetadata, {
-              downloadId: `${downloadId}-${video.id}`,
-              ytdlpCommand: `yt-dlp ${args.join(" ")}`,
-            }, false, "pending"); // Don't require file to exist yet, status is pending
-            console.log(`[${new Date().toISOString()}] Pre-tracked video: ${video.title}`);
-          } catch (err) {
-            console.error(`[${new Date().toISOString()}] Error pre-tracking video ${video.id}:`, err);
-          }
-        }
-      }
-    } else {
-      // Download metadata first before starting the actual download
-      try {
-      console.log(`[${new Date().toISOString()}] Downloading metadata for: ${options.url}`);
-      statusTracker.updateStatus(downloadId, { status: "downloading_metadata" });
-
-      fullVideoMetadata = await extractFullVideoMetadata(options.url);
-      if (fullVideoMetadata) {
-        singleVideoMetadata = {
-          id: fullVideoMetadata.id || "",
-          title: fullVideoMetadata.title || "",
-          channel: fullVideoMetadata.channel || fullVideoMetadata.uploader || "",
-          channelId: fullVideoMetadata.channel_id || fullVideoMetadata.channel_url?.split("/").pop(),
-          duration: fullVideoMetadata.duration || undefined,
-          playlistId: fullVideoMetadata.playlist_id || undefined,
-          playlistTitle: fullVideoMetadata.playlist_title || fullVideoMetadata.playlist || undefined,
-        };
-
-        // Update status with metadata
-        statusTracker.updateStatus(downloadId, {
-          title: singleVideoMetadata.title,
-          channel: singleVideoMetadata.channel,
-        });
-
-        // Save metadata to file immediately
-        if (singleVideoMetadata.id) {
-          const normalizedPath = options.outputPath.replace(/\/$/, "");
-          saveMetadataToFile(fullVideoMetadata, normalizedPath, singleVideoMetadata.id);
-        }
-
-        console.log(`[${new Date().toISOString()}] Metadata downloaded: ${singleVideoMetadata.title}`);
-      }
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] Error downloading metadata:`, error);
-      // Continue with download even if metadata fails
-    }
 
   // Spawn yt-dlp process and actively track its stdout/stderr + filesystem state.
   (async () => {
@@ -1064,6 +988,68 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
       stdout: "pipe",
       stderr: "pipe",
     });
+
+    // Extract metadata in background (non-blocking)
+    (async () => {
+      try {
+        console.log(`[${new Date().toISOString()}] Extracting metadata for: ${options.url}`);
+        statusTracker.updateStatus(downloadId, { status: "downloading" });
+
+        if (options.isPlaylist || options.isChannel) {
+          // For playlists/channels, get only the metadata for videos that will actually be downloaded
+          const playlistVideos = await extractLimitedPlaylistMetadata(options.url, options);
+          if (playlistVideos && playlistVideos.length > 0) {
+            console.log(`[${new Date().toISOString()}] Found ${playlistVideos.length} videos to download from playlist/channel`);
+
+            // Track all videos immediately in the library with pending status
+            const tracker = getTracker();
+            for (const video of playlistVideos) {
+              const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
+              try {
+                await processDownloadedVideo(video.id, videoUrl, options, video, video.fullMetadata, {
+                  downloadId: `${downloadId}-${video.id}`,
+                  ytdlpCommand: `yt-dlp ${args.join(" ")}`,
+                }, false, "pending"); // Don't require file to exist yet, status is pending
+                console.log(`[${new Date().toISOString()}] Pre-tracked video: ${video.title}`);
+              } catch (err) {
+                console.error(`[${new Date().toISOString()}] Error pre-tracking video ${video.id}:`, err);
+              }
+            }
+          }
+        } else {
+          // Download metadata for single video
+          const fullVideoMetadata = await extractFullVideoMetadata(options.url);
+          if (fullVideoMetadata) {
+            const singleVideoMetadata = {
+              id: fullVideoMetadata.id || "",
+              title: fullVideoMetadata.title || "",
+              channel: fullVideoMetadata.channel || fullVideoMetadata.uploader || "",
+              channelId: fullVideoMetadata.channel_id || fullVideoMetadata.channel_url?.split("/").pop(),
+              duration: fullVideoMetadata.duration || undefined,
+              playlistId: fullVideoMetadata.playlist_id || undefined,
+              playlistTitle: fullVideoMetadata.playlist_title || fullVideoMetadata.playlist || undefined,
+            };
+
+            // Update status with metadata
+            statusTracker.updateStatus(downloadId, {
+              title: singleVideoMetadata.title,
+              channel: singleVideoMetadata.channel,
+            });
+
+            // Save metadata to file
+            if (singleVideoMetadata.id) {
+              const normalizedPath = options.outputPath.replace(/\/$/, "");
+              saveMetadataToFile(fullVideoMetadata, normalizedPath, singleVideoMetadata.id);
+            }
+
+            console.log(`[${new Date().toISOString()}] Metadata downloaded: ${singleVideoMetadata.title}`);
+          }
+        }
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error downloading metadata:`, error);
+        // Continue with download even if metadata fails
+      }
+    })();
 
     const onLine = (raw: string) => {
       const line = raw.trim();
@@ -1212,20 +1198,7 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
         error: recentErrors.slice(-5).join(" | ") || `yt-dlp exited with code ${exitCode}`,
       });
 
-      // Update video status to failed in tracker
-      if (options.isPlaylist || options.isChannel) {
-        const tracker = getTracker();
-        if (playlistVideos) {
-          for (const video of playlistVideos) {
-            try {
-              tracker.updateVideoDownloadStatus(video.id, relative(DOWNLOADS_ROOT, options.outputPath), "failed");
-            } catch (err) {
-              console.error(`[${new Date().toISOString()}] Error updating video status to failed: ${video.id}`, err);
-            }
-          }
-        }
-      }
-
+      // Update video status to failed in tracker - handled by metadata extraction background task
       return;
     }
 
@@ -1241,29 +1214,6 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
         finalPath = currentDestination;
       }
     }
-    if (!finalPath && singleVideoMetadata?.id) {
-      try {
-        const normalizedPath = options.outputPath.replace(/\/$/, "");
-        if (existsSync(normalizedPath)) {
-          const glob = new Bun.Glob(`*[${singleVideoMetadata.id}]*`);
-          let newest: { path: string; mtimeMs: number } | null = null;
-          for await (const file of glob.scan(normalizedPath)) {
-            const fullPath = join(normalizedPath, file);
-            if (!existsSync(fullPath)) continue;
-            // Skip intermediate files: .part, .ytdl, and fragment files (format tags)
-            if (fullPath.endsWith(".part") || fullPath.endsWith(".ytdl")) continue;
-            const isFragmentFile = /\.f\d{1,4}\./i.test(fullPath);
-            if (isFragmentFile) continue;
-            const st = statSync(fullPath);
-            if (!st.isFile()) continue;
-            if (!newest || st.mtimeMs > newest.mtimeMs) newest = { path: fullPath, mtimeMs: st.mtimeMs };
-          }
-          if (newest) finalPath = newest.path;
-        }
-      } catch {
-        // ignore
-      }
-    }
 
     if (finalPath) {
       const ok = await waitForFileStable(finalPath, { timeoutMs: 60_000, stableMs: 1_500 });
@@ -1275,34 +1225,8 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
 
     statusTracker.updateStatus(downloadId, { status: "completed", progress: 100 });
 
-    // Update video status to completed in tracker
-    if (options.isPlaylist || options.isChannel) {
-      // Update all tracked videos for this download to completed
-      const tracker = getTracker();
-      if (playlistVideos) {
-        for (const video of playlistVideos) {
-          try {
-            tracker.updateVideoDownloadStatus(video.id, relative(DOWNLOADS_ROOT, options.outputPath), "completed");
-          } catch (err) {
-            console.error(`[${new Date().toISOString()}] Error updating video status to completed: ${video.id}`, err);
-          }
-        }
-      }
-    } else if (singleVideoMetadata) {
-      // Persist to tracker after completion for single-video downloads (ensures merged/extracted file exists).
-      const videoUrl = `https://www.youtube.com/watch?v=${singleVideoMetadata.id}`;
-      try {
-        await processDownloadedVideo(singleVideoMetadata.id, videoUrl, options, singleVideoMetadata, fullVideoMetadata, {
-          downloadId,
-          ytdlpCommand: `yt-dlp ${args.join(" ")}`,
-        });
-      } catch (err) {
-        console.error(`[${new Date().toISOString()}] Error tracking completed video:`, err);
-      }
-    }
+    // Video tracking is handled by the metadata extraction background task
   })();
-
-  }
 
   return {
     success: true,
