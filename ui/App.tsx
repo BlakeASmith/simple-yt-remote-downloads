@@ -1029,10 +1029,24 @@ function EditScheduleModal(props: {
 
 function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string) => void }) {
   const [tab, setTab] = useState<TrackingTab>(() => getTrackingTabFromHash() || "videos");
-  const [downloads, setDownloads] = useState<DownloadStatus[]>([]);
   const [videos, setVideos] = useState<TrackedVideo[]>([]);
   const [channels, setChannels] = useState<TrackedChannel[]>([]);
   const [playlists, setPlaylists] = useState<TrackedPlaylist[]>([]);
+
+  // Get active downloads from videos that are downloading or pending
+  const activeDownloads = videos
+    .filter(v => v.downloadStatus === "downloading" || v.downloadStatus === "pending")
+    .map(v => ({
+      id: `${v.id}-${v.relativePath}`,
+      url: v.url,
+      title: v.title,
+      channel: v.channel,
+      status: v.downloadStatus === "downloading" ? "downloading" : "processing", // Map to expected status
+      startedAt: v.downloadedAt,
+      outputPath: v.relativePath,
+      format: v.format,
+      resolution: v.resolution,
+    }));
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
   const [q, setQ] = useState("");
@@ -1109,20 +1123,12 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
     if (res.ok && res.data.success) setSchedules(res.data.schedules || []);
   }
 
-  async function loadDownloads() {
-    const res = await apiGet<{ success: true; downloads: DownloadStatus[] }>("/api/downloads/status");
-    if (!res.ok) return;
-    if (res.data.success) setDownloads(res.data.downloads || []);
-  }
-
   useEffect(() => {
     loadAll();
     loadSchedules();
-    loadDownloads();
   }, []);
 
-  useInterval(() => loadDownloads(), 2000);
-  useInterval(() => loadAll(), 30_000);
+  useInterval(() => loadAll(), 5000); // Refresh more frequently to show download status updates
   useInterval(() => loadSchedules(), 30_000);
 
   const filtered = useMemo(() => {
@@ -1140,11 +1146,11 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
     <div className="grid gap-6">
       <div className="grid gap-4 md:grid-cols-4">
         <Card title="Active downloads">
-          {downloads.length === 0 ? (
+          {activeDownloads.length === 0 ? (
             <div className="text-sm text-white/60">No active downloads.</div>
           ) : (
             <div className="grid gap-3">
-              {downloads.map((d) => (
+              {activeDownloads.map((d) => (
                 <div key={d.id} className="rounded-xl bg-white/3 p-3 ring-1 ring-white/8">
                   <div className="flex items-center justify-between gap-2">
                     <div className="truncate text-sm font-semibold">{d.title || d.url}</div>
@@ -1179,7 +1185,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     className="mt-3 rounded-lg bg-black/20 ring-1 ring-white/10"
                     onToggle={(e) => {
                       const el = e.currentTarget;
-                      if (el.open) void ensureLogs(d.id);
+                      if (el.open) void findLogsForVideo(d.id);
                     }}
                   >
                     <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-white/70 hover:text-white">
@@ -1192,6 +1198,9 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                         <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] leading-relaxed text-white/80 ring-1 ring-white/10">
                           {logsById[d.id]?.log || "(empty)"}
                         </pre>
+                      ) : null}
+                      {!logsById[d.id]?.loading && !logsById[d.id]?.error && !logsById[d.id]?.log ? (
+                        <div className="text-xs text-white/60">No logs available</div>
                       ) : null}
                     </div>
                   </details>
@@ -1241,6 +1250,9 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                               <div className="flex flex-wrap items-center gap-2">
                                 <div className="truncate text-sm font-semibold">{v.title}</div>
                                 <Badge tone="muted">{v.format === "audio" ? "Audio" : `Video ${v.resolution || ""}`.trim()}</Badge>
+                                {v.downloadStatus === "pending" ? <Badge tone="warn">Pending</Badge> : null}
+                                {v.downloadStatus === "downloading" ? <Badge tone="good">Downloading</Badge> : null}
+                                {v.downloadStatus === "failed" ? <Badge tone="bad">Failed</Badge> : null}
                                 {v.deleted ? <Badge tone="bad">Deleted</Badge> : null}
                               </div>
                               <div className="mt-1 truncate text-xs text-white/55">
@@ -1280,6 +1292,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                               </Button>
                               <Button
                                 variant="danger"
+                                disabled={v.downloadStatus !== "completed"}
                                 onClick={async () => {
                                   if (!window.confirm(`Delete "${v.title}"? This will remove all associated files and cannot be undone.`)) return;
                                   const videoKey = `${v.id}:${v.relativePath}`;
@@ -1342,8 +1355,16 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                                         <div>Status: <span className="text-red-300">Deleted</span></div>
                                         {v.deletedAt ? <div>Deleted at: <span className="text-white/85">{formatTime(v.deletedAt)}</span></div> : null}
                                       </>
-                                    ) : (
+                                    ) : v.downloadStatus === "completed" ? (
                                       <div>Status: <span className="text-green-300">Available</span></div>
+                                    ) : v.downloadStatus === "downloading" ? (
+                                      <div>Status: <span className="text-blue-300">Downloading</span></div>
+                                    ) : v.downloadStatus === "pending" ? (
+                                      <div>Status: <span className="text-yellow-300">Pending</span></div>
+                                    ) : v.downloadStatus === "failed" ? (
+                                      <div>Status: <span className="text-red-300">Failed</span></div>
+                                    ) : (
+                                      <div>Status: <span className="text-gray-300">Unknown</span></div>
                                     )}
                                   </div>
                                 </div>

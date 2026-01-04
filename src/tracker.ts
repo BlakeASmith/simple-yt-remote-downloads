@@ -48,6 +48,7 @@ export interface TrackedVideo {
   files: TrackedFile[];
   /** @deprecated Prefer `files` */
   thumbnailPath?: string;
+  downloadStatus: "pending" | "downloading" | "completed" | "failed"; // Download status
   deleted?: boolean; // Track if file was deleted
   deletedAt?: number; // timestamp when deleted
 }
@@ -109,6 +110,7 @@ function initTrackerDatabase(): Database {
       duration REAL,
       ytdlpCommand TEXT,
       metadata TEXT,
+      downloadStatus TEXT DEFAULT 'pending',
       deleted INTEGER DEFAULT 0,
       deletedAt INTEGER,
       PRIMARY KEY (id, relativePath)
@@ -123,9 +125,15 @@ function initTrackerDatabase(): Database {
     if (!hasMetadataColumn) {
       db.exec(`ALTER TABLE videos ADD COLUMN metadata TEXT`);
     }
+    const hasDownloadStatusColumn = tableInfo.some(col => col.name === "downloadStatus");
+    if (!hasDownloadStatusColumn) {
+      db.exec(`ALTER TABLE videos ADD COLUMN downloadStatus TEXT DEFAULT 'completed'`);
+      // Update existing records to completed status
+      db.exec(`UPDATE videos SET downloadStatus = 'completed' WHERE downloadStatus IS NULL`);
+    }
   } catch (error) {
     // Ignore errors - column might already exist or table might not exist yet
-    console.warn(`[${new Date().toISOString()}] Could not add metadata column (may already exist):`, error);
+    console.warn(`[${new Date().toISOString()}] Could not add metadata/downloadStatus columns (may already exist):`, error);
   }
 
   // Create tracked_files table (one-to-many with videos)
@@ -245,9 +253,9 @@ class Tracker {
     
     // Prepare statements for videos
     this.insertVideoStmt = this.db.prepare(`
-      INSERT OR REPLACE INTO videos 
-      (id, relativePath, title, channel, channelId, url, fullPath, downloadedAt, format, resolution, fileSize, duration, ytdlpCommand, metadata, deleted, deletedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR REPLACE INTO videos
+      (id, relativePath, title, channel, channelId, url, fullPath, downloadedAt, format, resolution, fileSize, duration, ytdlpCommand, metadata, downloadStatus, deleted, deletedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     
     this.updateVideoStmt = this.db.prepare(`
@@ -358,7 +366,7 @@ class Tracker {
   /**
    * Track a downloaded video
    */
-  trackVideo(video: Omit<TrackedVideo, "downloadedAt">): TrackedVideo {
+  trackVideo(video: Omit<TrackedVideo, "downloadedAt">, downloadStatus: "pending" | "downloading" | "completed" | "failed" = "completed"): TrackedVideo {
     const trackedVideo: TrackedVideo = {
       ...video,
       id: video.id, // Use YouTube video ID as the ID
@@ -434,6 +442,7 @@ class Tracker {
       trackedVideo.duration ?? null,
       trackedVideo.ytdlpCommand ?? null,
       metadataJson,
+      downloadStatus,
       existing?.deleted ?? 0,
       existing?.deletedAt ?? null
     );
@@ -595,6 +604,17 @@ class Tracker {
       videoCount,
       videoIds,
     };
+  }
+
+  /**
+   * Update download status of a video
+   */
+  updateVideoDownloadStatus(videoId: string, relativePath: string, status: "pending" | "downloading" | "completed" | "failed"): boolean {
+    const updateStatusStmt = this.db.prepare(`
+      UPDATE videos SET downloadStatus = ? WHERE id = ? AND relativePath = ?
+    `);
+    const result = updateStatusStmt.run(status, videoId, relativePath);
+    return result.changes > 0;
   }
 
   /**
@@ -1077,6 +1097,7 @@ class Tracker {
         firstSeenAt: f.firstSeenAt,
         deletedAt: f.deletedAt ?? undefined,
       })),
+      downloadStatus: (row.downloadStatus as "pending" | "downloading" | "completed" | "failed") || "completed",
       deleted: !!row.deleted,
       deletedAt: row.deletedAt ?? undefined,
     };
