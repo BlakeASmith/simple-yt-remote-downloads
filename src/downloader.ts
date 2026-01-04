@@ -496,8 +496,8 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
   // Exclude YouTube Shorts if requested
   if (excludeShorts && (isChannel || isPlaylist)) {
     // Match filter: exclude videos where the webpage URL contains '/shorts/'
-    // Using contains operator (*) to check if '/shorts/' is in the URL
-    args.push("--match-filter", "!webpage_url * '/shorts/'");
+    // Using Python-style 'in' operator to check if '/shorts/' is in the URL
+    args.push("--match-filter", "!'/shorts/' in webpage_url");
   }
 
   // Use --yes-playlist for playlists and channels, --no-playlist for single videos
