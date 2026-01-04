@@ -610,33 +610,49 @@ class Tracker {
    * Returns immediately after database deletion, file deletion happens asynchronously
    */
   deleteVideo(videoId: string, relativePath: string): boolean {
+    const startTime = performance.now();
+    
     // Get video info and associated files before deletion
+    const getVideoStartTime = performance.now();
     const video = this.getVideoStmt.get(videoId, relativePath) as any;
+    const getVideoDuration = performance.now() - getVideoStartTime;
+    
     if (!video) {
+      console.log(`[${new Date().toISOString()}] [PERF] deleteVideo(${videoId}) - Video not found (getVideo: ${getVideoDuration.toFixed(2)}ms)`);
       return false;
     }
 
     // Get all associated files
+    const getFilesStartTime = performance.now();
     const files = this.getVideoFilesStmt.all(videoId, relativePath) as Array<{
       path: string;
       kind: string;
       intermediate: number;
       exists: number;
     }>;
+    const getFilesDuration = performance.now() - getFilesStartTime;
 
     // Delete video from database first (cascades to tracked_files via foreign key)
+    const deleteDbStartTime = performance.now();
     const deleteVideoStmt = this.db.prepare(`
       DELETE FROM videos WHERE id = ? AND relativePath = ?
     `);
     const result = deleteVideoStmt.run(videoId, relativePath);
+    const deleteDbDuration = performance.now() - deleteDbStartTime;
     
     if (result.changes === 0) {
+      const totalDuration = performance.now() - startTime;
+      console.log(`[${new Date().toISOString()}] [PERF] deleteVideo(${videoId}) - No changes (getVideo: ${getVideoDuration.toFixed(2)}ms, getFiles: ${getFilesDuration.toFixed(2)}ms, deleteDb: ${deleteDbDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms)`);
       return false;
     }
 
     // Delete all associated files from disk asynchronously (non-blocking)
+    const fileCheckStartTime = performance.now();
     const filePaths = files.filter(f => f.exists && existsSync(f.path)).map(f => f.path);
+    const fileCheckDuration = performance.now() - fileCheckStartTime;
+    
     if (filePaths.length > 0) {
+      const asyncStartTime = performance.now();
       // Perform file deletion asynchronously without blocking
       Promise.all(
         filePaths.map(async (filePath) => {
@@ -644,17 +660,19 @@ class Tracker {
             await rm(filePath, { force: true });
           } catch (error) {
             // Log but continue - don't fail deletion if a file can't be deleted
-            console.error(`[${new Date().toISOString()}] Failed to delete file ${filePath}:`, error);
+            console.error(`[${new Date().toISOString()}] [PERF] Failed to delete file ${filePath}:`, error);
           }
         })
       ).then(() => {
-        console.log(`[${new Date().toISOString()}] Asynchronously deleted ${filePaths.length} files for video ${videoId} (${relativePath})`);
+        const asyncDuration = performance.now() - asyncStartTime;
+        console.log(`[${new Date().toISOString()}] [PERF] Asynchronously deleted ${filePaths.length} files for video ${videoId} (${relativePath}) - Async queue: ${asyncDuration.toFixed(2)}ms`);
       }).catch((error) => {
-        console.error(`[${new Date().toISOString()}] Error during async file deletion for video ${videoId}:`, error);
+        console.error(`[${new Date().toISOString()}] [PERF] Error during async file deletion for video ${videoId}:`, error);
       });
     }
     
-    console.log(`[${new Date().toISOString()}] Deleted video ${videoId} (${relativePath}) from database, ${filePaths.length} files queued for deletion`);
+    const totalDuration = performance.now() - startTime;
+    console.log(`[${new Date().toISOString()}] [PERF] deleteVideo(${videoId}) - GetVideo: ${getVideoDuration.toFixed(2)}ms, GetFiles: ${getFilesDuration.toFixed(2)}ms, DeleteDB: ${deleteDbDuration.toFixed(2)}ms, FileCheck: ${fileCheckDuration.toFixed(2)}ms, FilesQueued: ${filePaths.length}, Total: ${totalDuration.toFixed(2)}ms`);
     
     return true;
   }
@@ -664,32 +682,44 @@ class Tracker {
    * Returns immediately after database deletion, file deletion happens asynchronously
    */
   deleteChannel(channelId: string): boolean {
+    const startTime = performance.now();
+    
     // Check if channel exists
+    const getChannelStartTime = performance.now();
     const getChannelByIdStmt = this.db.prepare(`SELECT * FROM channels WHERE id = ?`);
     const channelData = getChannelByIdStmt.get(channelId) as any;
+    const getChannelDuration = performance.now() - getChannelStartTime;
     
     if (!channelData) {
+      console.log(`[${new Date().toISOString()}] [PERF] deleteChannel(${channelId}) - Channel not found (getChannel: ${getChannelDuration.toFixed(2)}ms)`);
       return false;
     }
 
     // Get all videos associated with this channel
+    const getVideosStartTime = performance.now();
     const channelVideos = this.getChannelVideosStmt.all(channelId) as Array<{ videoId: string; videoRelativePath: string }>;
+    const getVideosDuration = performance.now() - getVideosStartTime;
     
     // Delete each video (which will delete files and database entries asynchronously)
+    const deleteVideosStartTime = performance.now();
     let deletedVideos = 0;
     for (const { videoId, videoRelativePath } of channelVideos) {
       if (this.deleteVideo(videoId, videoRelativePath)) {
         deletedVideos++;
       }
     }
+    const deleteVideosDuration = performance.now() - deleteVideosStartTime;
 
     // Delete channel entry (cascades to channel_videos via foreign key)
+    const deleteChannelStartTime = performance.now();
     const deleteChannelStmt = this.db.prepare(`
       DELETE FROM channels WHERE id = ?
     `);
     const result = deleteChannelStmt.run(channelId);
+    const deleteChannelDuration = performance.now() - deleteChannelStartTime;
     
-    console.log(`[${new Date().toISOString()}] Deleted channel ${channelId} from database: ${deletedVideos} videos removed (files deleting asynchronously)`);
+    const totalDuration = performance.now() - startTime;
+    console.log(`[${new Date().toISOString()}] [PERF] deleteChannel(${channelId}) - GetChannel: ${getChannelDuration.toFixed(2)}ms, GetVideos: ${getVideosDuration.toFixed(2)}ms, DeleteVideos: ${deleteVideosDuration.toFixed(2)}ms (${deletedVideos} videos), DeleteChannel: ${deleteChannelDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms`);
     
     return result.changes > 0;
   }
@@ -699,32 +729,44 @@ class Tracker {
    * Returns immediately after database deletion, file deletion happens asynchronously
    */
   deletePlaylist(playlistId: string): boolean {
+    const startTime = performance.now();
+    
     // Check if playlist exists
+    const getPlaylistStartTime = performance.now();
     const getPlaylistByIdStmt = this.db.prepare(`SELECT * FROM playlists WHERE id = ?`);
     const playlistData = getPlaylistByIdStmt.get(playlistId) as any;
+    const getPlaylistDuration = performance.now() - getPlaylistStartTime;
     
     if (!playlistData) {
+      console.log(`[${new Date().toISOString()}] [PERF] deletePlaylist(${playlistId}) - Playlist not found (getPlaylist: ${getPlaylistDuration.toFixed(2)}ms)`);
       return false;
     }
 
     // Get all videos associated with this playlist
+    const getVideosStartTime = performance.now();
     const playlistVideos = this.getPlaylistVideosStmt.all(playlistId) as Array<{ videoId: string; videoRelativePath: string }>;
+    const getVideosDuration = performance.now() - getVideosStartTime;
     
     // Delete each video (which will delete files and database entries asynchronously)
+    const deleteVideosStartTime = performance.now();
     let deletedVideos = 0;
     for (const { videoId, videoRelativePath } of playlistVideos) {
       if (this.deleteVideo(videoId, videoRelativePath)) {
         deletedVideos++;
       }
     }
+    const deleteVideosDuration = performance.now() - deleteVideosStartTime;
 
     // Delete playlist entry (cascades to playlist_videos via foreign key)
+    const deletePlaylistStartTime = performance.now();
     const deletePlaylistStmt = this.db.prepare(`
       DELETE FROM playlists WHERE id = ?
     `);
     const result = deletePlaylistStmt.run(playlistId);
+    const deletePlaylistDuration = performance.now() - deletePlaylistStartTime;
     
-    console.log(`[${new Date().toISOString()}] Deleted playlist ${playlistId} from database: ${deletedVideos} videos removed (files deleting asynchronously)`);
+    const totalDuration = performance.now() - startTime;
+    console.log(`[${new Date().toISOString()}] [PERF] deletePlaylist(${playlistId}) - GetPlaylist: ${getPlaylistDuration.toFixed(2)}ms, GetVideos: ${getVideosDuration.toFixed(2)}ms, DeleteVideos: ${deleteVideosDuration.toFixed(2)}ms (${deletedVideos} videos), DeletePlaylist: ${deletePlaylistDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms`);
     
     return result.changes > 0;
   }
@@ -734,19 +776,29 @@ class Tracker {
    * Returns immediately after database deletion, file deletion happens asynchronously
    */
   deleteVideosByCollectionPath(collectionRootPath: string): { deletedVideos: number; deletedFiles: number } {
+    const startTime = performance.now();
+    
     // Get all videos and filter by those whose fullPath starts with collectionRootPath
+    const getAllVideosStartTime = performance.now();
     const allVideos = this.getAllVideos();
+    const getAllVideosDuration = performance.now() - getAllVideosStartTime;
+    
+    const filterStartTime = performance.now();
     const collectionVideos = allVideos.filter(v => v.fullPath.startsWith(collectionRootPath));
+    const filterDuration = performance.now() - filterStartTime;
     
     // Delete each video (which will delete files and database entries asynchronously)
+    const deleteVideosStartTime = performance.now();
     let deletedVideos = 0;
     for (const video of collectionVideos) {
       if (this.deleteVideo(video.id, video.relativePath)) {
         deletedVideos++;
       }
     }
+    const deleteVideosDuration = performance.now() - deleteVideosStartTime;
     
-    console.log(`[${new Date().toISOString()}] Deleted ${deletedVideos} videos from collection path ${collectionRootPath} (files deleting asynchronously)`);
+    const totalDuration = performance.now() - startTime;
+    console.log(`[${new Date().toISOString()}] [PERF] deleteVideosByCollectionPath(${collectionRootPath}) - GetAllVideos: ${getAllVideosDuration.toFixed(2)}ms, Filter: ${filterDuration.toFixed(2)}ms, DeleteVideos: ${deleteVideosDuration.toFixed(2)}ms (${deletedVideos}/${collectionVideos.length} videos), Total: ${totalDuration.toFixed(2)}ms`);
     
     // Note: deletedFiles count is not tracked here since deleteVideo handles file deletion internally and asynchronously
     return { deletedVideos, deletedFiles: 0 };
@@ -757,12 +809,19 @@ class Tracker {
    * Updates fullPath and relativePath for all videos in the old collection path
    */
   updateVideoPathsForCollectionMove(oldRootPath: string, newRootPath: string, downloadsRoot: string = "/downloads"): { updatedVideos: number } {
+    const startTime = performance.now();
+    const resolveStartTime = performance.now();
     const resolvedOldPath = resolve(oldRootPath);
     const resolvedNewPath = resolve(newRootPath);
     const resolvedDownloadsRoot = resolve(downloadsRoot);
+    const resolveDuration = performance.now() - resolveStartTime;
 
     // Get all videos whose fullPath starts with oldRootPath
+    const getAllVideosStartTime = performance.now();
     const allVideos = this.getAllVideos();
+    const getAllVideosDuration = performance.now() - getAllVideosStartTime;
+    
+    const filterStartTime = performance.now();
     const videosToUpdate = allVideos.filter(v => {
       try {
         return resolve(v.fullPath).startsWith(resolvedOldPath);
@@ -770,11 +829,14 @@ class Tracker {
         return false;
       }
     });
+    const filterDuration = performance.now() - filterStartTime;
 
     let updatedCount = 0;
+    const updateStartTime = performance.now();
 
     for (const video of videosToUpdate) {
       try {
+        const videoUpdateStartTime = performance.now();
         const oldFullPath = resolve(video.fullPath);
         // Calculate relative path from old collection root to the video file
         const relativeFromOldRoot = relative(resolvedOldPath, oldFullPath);
@@ -838,12 +900,19 @@ class Tracker {
 
           updatedCount++;
         }
+        const videoUpdateDuration = performance.now() - videoUpdateStartTime;
+        if (videoUpdateDuration > 50) {
+          console.log(`[${new Date().toISOString()}] [PERF] updateVideoPathsForCollectionMove - Single video update took ${videoUpdateDuration.toFixed(2)}ms`);
+        }
       } catch (error) {
-        console.error(`[${new Date().toISOString()}] Error updating video path for ${video.id}:`, error);
+        console.error(`[${new Date().toISOString()}] [PERF] Error updating video path for ${video.id}:`, error);
       }
     }
+    const updateDuration = performance.now() - updateStartTime;
 
-    console.log(`[${new Date().toISOString()}] Updated ${updatedCount} video paths from ${resolvedOldPath} to ${resolvedNewPath}`);
+    const totalDuration = performance.now() - startTime;
+    console.log(`[${new Date().toISOString()}] [PERF] updateVideoPathsForCollectionMove(${oldRootPath} -> ${newRootPath}) - Resolve: ${resolveDuration.toFixed(2)}ms, GetAllVideos: ${getAllVideosDuration.toFixed(2)}ms, Filter: ${filterDuration.toFixed(2)}ms, Update: ${updateDuration.toFixed(2)}ms (${updatedCount}/${videosToUpdate.length} videos), Total: ${totalDuration.toFixed(2)}ms`);
+    
     return { updatedVideos: updatedCount };
   }
 
@@ -851,8 +920,21 @@ class Tracker {
    * Get all tracked videos
    */
   getAllVideos(): TrackedVideo[] {
+    const startTime = performance.now();
+    const queryStartTime = performance.now();
     const rows = this.getAllVideosStmt.all() as Array<any>;
-    return rows.map(row => this.videoRowToTrackedVideo(row));
+    const queryDuration = performance.now() - queryStartTime;
+    
+    const mapStartTime = performance.now();
+    const result = rows.map(row => this.videoRowToTrackedVideo(row));
+    const mapDuration = performance.now() - mapStartTime;
+    
+    const totalDuration = performance.now() - startTime;
+    if (totalDuration > 50 || rows.length > 100) {
+      console.log(`[${new Date().toISOString()}] [PERF] getAllVideos() - Query: ${queryDuration.toFixed(2)}ms, Map: ${mapDuration.toFixed(2)}ms, Rows: ${rows.length}, Total: ${totalDuration.toFixed(2)}ms`);
+    }
+    
+    return result;
   }
 
   /**

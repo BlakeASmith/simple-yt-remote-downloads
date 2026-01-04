@@ -211,7 +211,11 @@ class CollectionsManager {
     updateTrackerCallback?: (oldRootPath: string, newRootPath: string) => { updatedVideos: number },
     updateSchedulesCallback?: (oldCollectionId: string, newCollectionId: string) => void
   ): Collection | null {
+    const startTime = performance.now();
+    const getCollectionStartTime = performance.now();
     const existing = this.getCollection(id);
+    const getCollectionDuration = performance.now() - getCollectionStartTime;
+    
     if (!existing) {
       return null;
     }
@@ -220,32 +224,49 @@ class CollectionsManager {
     const finalRootPath = newRootPath ? resolve(newRootPath) : existing.rootPath;
 
     // If rootPath is changing, move files on disk
+    let fileOpsDuration = 0;
+    let trackerUpdateDuration = 0;
     if (finalRootPath !== existing.rootPath) {
       try {
+        const fileOpsStartTime = performance.now();
         // Ensure target directory exists
+        const mkdirStartTime = performance.now();
         if (!existsSync(finalRootPath)) {
           mkdirSync(finalRootPath, { recursive: true });
         }
+        const mkdirDuration = performance.now() - mkdirStartTime;
 
         // Move directory contents if source exists
         if (existsSync(existing.rootPath)) {
           // Use cpSync then rmSync for cross-filesystem compatibility
+          const cpStartTime = performance.now();
           cpSync(existing.rootPath, finalRootPath, { recursive: true });
+          const cpDuration = performance.now() - cpStartTime;
+          
+          const rmStartTime = performance.now();
           rmSync(existing.rootPath, { recursive: true, force: true });
+          const rmDuration = performance.now() - rmStartTime;
+          
+          fileOpsDuration = performance.now() - fileOpsStartTime;
+          console.log(`[${new Date().toISOString()}] [PERF] moveCollection file operations - Mkdir: ${mkdirDuration.toFixed(2)}ms, Copy: ${cpDuration.toFixed(2)}ms, Remove: ${rmDuration.toFixed(2)}ms, Total: ${fileOpsDuration.toFixed(2)}ms`);
         }
+        fileOpsDuration = performance.now() - fileOpsStartTime;
 
         // Update tracker (video paths)
         if (updateTrackerCallback) {
+          const trackerStartTime = performance.now();
           const result = updateTrackerCallback(existing.rootPath, finalRootPath);
-          console.log(`[${new Date().toISOString()}] Updated ${result.updatedVideos} video paths in tracker`);
+          trackerUpdateDuration = performance.now() - trackerStartTime;
+          console.log(`[${new Date().toISOString()}] [PERF] Updated ${result.updatedVideos} video paths in tracker (${trackerUpdateDuration.toFixed(2)}ms)`);
         }
       } catch (error) {
-        console.error(`[${new Date().toISOString()}] Error moving collection files:`, error);
+        console.error(`[${new Date().toISOString()}] [PERF] Error moving collection files:`, error);
         throw new Error(`Failed to move collection files: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
     // Update collection database entry
+    const dbUpdateStartTime = performance.now();
     const updatedAt = Date.now();
     this.updateStmt.run(
       finalName !== existing.name ? finalName : null,
@@ -253,10 +274,16 @@ class CollectionsManager {
       updatedAt,
       id
     );
+    const dbUpdateDuration = performance.now() - dbUpdateStartTime;
 
-    console.log(`[${new Date().toISOString()}] Moved collection: ${id} (name: ${existing.name} -> ${finalName}, path: ${existing.rootPath} -> ${finalRootPath})`);
+    const getUpdatedStartTime = performance.now();
+    const updated = this.getCollection(id)!;
+    const getUpdatedDuration = performance.now() - getUpdatedStartTime;
     
-    return this.getCollection(id)!;
+    const totalDuration = performance.now() - startTime;
+    console.log(`[${new Date().toISOString()}] [PERF] moveCollection(${id}) - GetCollection: ${getCollectionDuration.toFixed(2)}ms, FileOps: ${fileOpsDuration.toFixed(2)}ms, TrackerUpdate: ${trackerUpdateDuration.toFixed(2)}ms, DBUpdate: ${dbUpdateDuration.toFixed(2)}ms, GetUpdated: ${getUpdatedDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms`);
+    
+    return updated;
   }
 
   /**
@@ -270,8 +297,12 @@ class CollectionsManager {
     updateSchedulesCallback?: (oldCollectionId: string, newCollectionId: string) => void,
     deleteVideosCallback?: (rootPath: string) => { deletedVideos: number; deletedFiles: number }
   ): Collection | null {
+    const startTime = performance.now();
+    
+    const getCollectionsStartTime = performance.now();
     const source = this.getCollection(sourceId);
     const target = this.getCollection(targetId);
+    const getCollectionsDuration = performance.now() - getCollectionsStartTime;
 
     if (!source || !target) {
       return null;
@@ -282,40 +313,65 @@ class CollectionsManager {
     }
 
     // Move files from source to target
+    let fileOpsDuration = 0;
+    let trackerUpdateDuration = 0;
     if (existsSync(source.rootPath)) {
       try {
+        const fileOpsStartTime = performance.now();
         // Ensure target directory exists
+        const mkdirStartTime = performance.now();
         if (!existsSync(target.rootPath)) {
           mkdirSync(target.rootPath, { recursive: true });
         }
+        const mkdirDuration = performance.now() - mkdirStartTime;
 
         // Move all contents from source to target
         // Use cpSync then rmSync for cross-filesystem compatibility
+        const cpStartTime = performance.now();
         cpSync(source.rootPath, target.rootPath, { recursive: true });
+        const cpDuration = performance.now() - cpStartTime;
+        
+        const rmStartTime = performance.now();
         rmSync(source.rootPath, { recursive: true, force: true });
+        const rmDuration = performance.now() - rmStartTime;
+        
+        fileOpsDuration = performance.now() - fileOpsStartTime;
+        console.log(`[${new Date().toISOString()}] [PERF] mergeCollection file operations - Mkdir: ${mkdirDuration.toFixed(2)}ms, Copy: ${cpDuration.toFixed(2)}ms, Remove: ${rmDuration.toFixed(2)}ms, Total: ${fileOpsDuration.toFixed(2)}ms`);
 
         // Update tracker (video paths)
         if (updateTrackerCallback) {
+          const trackerStartTime = performance.now();
           const result = updateTrackerCallback(source.rootPath, target.rootPath);
-          console.log(`[${new Date().toISOString()}] Updated ${result.updatedVideos} video paths in tracker`);
+          trackerUpdateDuration = performance.now() - trackerStartTime;
+          console.log(`[${new Date().toISOString()}] [PERF] Updated ${result.updatedVideos} video paths in tracker (${trackerUpdateDuration.toFixed(2)}ms)`);
         }
       } catch (error) {
-        console.error(`[${new Date().toISOString()}] Error merging collection files:`, error);
+        console.error(`[${new Date().toISOString()}] [PERF] Error merging collection files:`, error);
         throw new Error(`Failed to merge collection files: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
     // Update schedules to point to target collection
+    let schedulesUpdateDuration = 0;
     if (updateSchedulesCallback) {
+      const schedulesStartTime = performance.now();
       updateSchedulesCallback(sourceId, targetId);
+      schedulesUpdateDuration = performance.now() - schedulesStartTime;
     }
 
     // Delete source collection (without deleting videos since they're moved)
+    const deleteStartTime = performance.now();
     this.deleteStmt.run(sourceId);
+    const deleteDuration = performance.now() - deleteStartTime;
     
-    console.log(`[${new Date().toISOString()}] Merged collection ${sourceId} into ${targetId}`);
+    const getResultStartTime = performance.now();
+    const result = this.getCollection(targetId)!;
+    const getResultDuration = performance.now() - getResultStartTime;
     
-    return this.getCollection(targetId)!;
+    const totalDuration = performance.now() - startTime;
+    console.log(`[${new Date().toISOString()}] [PERF] mergeCollection(${sourceId} -> ${targetId}) - GetCollections: ${getCollectionsDuration.toFixed(2)}ms, FileOps: ${fileOpsDuration.toFixed(2)}ms, TrackerUpdate: ${trackerUpdateDuration.toFixed(2)}ms, SchedulesUpdate: ${schedulesUpdateDuration.toFixed(2)}ms, Delete: ${deleteDuration.toFixed(2)}ms, GetResult: ${getResultDuration.toFixed(2)}ms, Total: ${totalDuration.toFixed(2)}ms`);
+    
+    return result;
   }
 }
 
