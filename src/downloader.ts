@@ -982,6 +982,7 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
     let finalOutputFile: string | null = null; // merged/extracted final output file
     let inferredTotalBytes: number | null = null;
     const recentErrors: string[] = [];
+    const processedVideoIds = new Set<string>(); // Track which videos yt-dlp actually processed
 
     const proc = Bun.spawn({
       cmd: ["yt-dlp", ...args],
@@ -1063,6 +1064,8 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
         try {
           const metadata = JSON.parse(line);
           if (metadata && metadata.id && metadata.title) {
+            processedVideoIds.add(metadata.id); // Track that this video was processed by yt-dlp
+
             // Calculate relative path for this download
             let checkRelativePath: string;
             try {
@@ -1198,7 +1201,61 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
         error: recentErrors.slice(-5).join(" | ") || `yt-dlp exited with code ${exitCode}`,
       });
 
-      // Update video status to failed in tracker - handled by metadata extraction background task
+      // For playlist/channel downloads, mark videos that were in progress as failed
+      if (options.isPlaylist || options.isChannel) {
+        try {
+          const tracker = getTracker();
+          let checkRelativePath: string;
+          try {
+            checkRelativePath = relative(DOWNLOADS_ROOT, options.outputPath);
+            if (checkRelativePath.startsWith("..")) {
+              checkRelativePath = options.outputPath;
+            }
+          } catch {
+            checkRelativePath = options.outputPath;
+          }
+
+          // Get all videos in this path that are "pending" or "downloading"
+          const allVideos = tracker.getAllVideos();
+          const inProgressVideos = allVideos.filter(v =>
+            v.relativePath === checkRelativePath &&
+            (v.downloadStatus === "pending" || v.downloadStatus === "downloading")
+          );
+
+          // Mark failed videos as failed
+          for (const video of inProgressVideos) {
+            if (tracker.updateVideoDownloadStatus(video.id, video.relativePath, "failed")) {
+              console.log(`[${new Date().toISOString()}] Marked failed video: ${video.title}`);
+            }
+          }
+        } catch (error) {
+          console.error(`[${new Date().toISOString()}] Error updating failed video statuses:`, error);
+        }
+      } else {
+        // For single video downloads, mark as failed if it was being tracked
+        try {
+          const videoId = extractVideoId(options.url);
+          if (videoId) {
+            const tracker = getTracker();
+            let checkRelativePath: string;
+            try {
+              checkRelativePath = relative(DOWNLOADS_ROOT, options.outputPath);
+              if (checkRelativePath.startsWith("..")) {
+                checkRelativePath = options.outputPath;
+              }
+            } catch {
+              checkRelativePath = options.outputPath;
+            }
+
+            if (tracker.updateVideoDownloadStatus(videoId, checkRelativePath, "failed")) {
+              console.log(`[${new Date().toISOString()}] Marked single failed video: ${videoId}`);
+            }
+          }
+        } catch (error) {
+          console.error(`[${new Date().toISOString()}] Error updating failed single video status:`, error);
+        }
+      }
+
       return;
     }
 
@@ -1224,6 +1281,87 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
     }
 
     statusTracker.updateStatus(downloadId, { status: "completed", progress: 100 });
+
+    // Update video status in tracker database to completed
+    if (exitCode === 0) {
+      try {
+        const tracker = getTracker();
+        let checkRelativePath: string;
+        try {
+          checkRelativePath = relative(DOWNLOADS_ROOT, options.outputPath);
+          if (checkRelativePath.startsWith("..")) {
+            checkRelativePath = options.outputPath;
+          }
+        } catch {
+          checkRelativePath = options.outputPath;
+        }
+
+        if (options.isPlaylist || options.isChannel) {
+          // For playlist/channel downloads, mark processed videos as completed
+          const allVideos = tracker.getAllVideos();
+          const processedVideos = allVideos.filter(v =>
+            v.relativePath === checkRelativePath &&
+            processedVideoIds.has(v.id)
+          );
+
+          for (const video of processedVideos) {
+            if (tracker.updateVideoDownloadStatus(video.id, video.relativePath, "completed")) {
+              console.log(`[${new Date().toISOString()}] Marked processed video as completed: ${video.title}`);
+            }
+          }
+
+          // Mark skipped videos as completed (those that were pending but not processed)
+          const pendingVideos = allVideos.filter(v =>
+            v.relativePath === checkRelativePath &&
+            v.downloadStatus === "pending" &&
+            !processedVideoIds.has(v.id)
+          );
+
+          for (const video of pendingVideos) {
+            if (tracker.updateVideoDownloadStatus(video.id, video.relativePath, "completed")) {
+              console.log(`[${new Date().toISOString()}] Marked skipped video as completed: ${video.title}`);
+            }
+          }
+        } else {
+          // For single video downloads, mark the video as completed
+          // Extract video ID from URL
+          const videoId = extractVideoId(options.url);
+          if (videoId) {
+            // Get metadata for the completed video
+            const fullMetadata = await extractFullVideoMetadata(options.url);
+            if (fullMetadata) {
+              const videoMetadata = {
+                id: fullMetadata.id || videoId,
+                title: fullMetadata.title || "",
+                channel: fullMetadata.channel || fullMetadata.uploader || "",
+                channelId: fullMetadata.channel_id || fullMetadata.channel_url?.split("/").pop(),
+                duration: fullMetadata.duration || undefined,
+                playlistId: fullMetadata.playlist_id || undefined,
+                playlistTitle: fullMetadata.playlist_title || fullMetadata.playlist || undefined,
+              };
+
+              // Mark the video as completed in the tracker
+              await processDownloadedVideo(
+                videoId,
+                options.url,
+                options,
+                videoMetadata,
+                fullMetadata,
+                {
+                  downloadId,
+                  ytdlpCommand: `yt-dlp ${args.join(" ")}`,
+                },
+                true, // Require file to exist
+                "completed"
+              );
+              console.log(`[${new Date().toISOString()}] Marked single video as completed: ${videoMetadata.title}`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`[${new Date().toISOString()}] Error updating completed video statuses:`, error);
+      }
+    }
 
     // Video tracking is handled by the metadata extraction background task
   })();
