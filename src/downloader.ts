@@ -991,11 +991,10 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
   }> | null = null;
 
   // Extract metadata upfront
-  try {
-    console.log(`[${new Date().toISOString()}] Extracting metadata for: ${options.url}`);
-    statusTracker.updateStatus(downloadId, { status: "downloading_metadata" });
+  console.log(`[${new Date().toISOString()}] Extracting metadata for: ${options.url}`);
+  statusTracker.updateStatus(downloadId, { status: "downloading_metadata" });
 
-    if (options.isPlaylist || options.isChannel) {
+  if (options.isPlaylist || options.isChannel) {
       // For playlists/channels, get only the metadata for videos that will actually be downloaded
       playlistVideos = await extractLimitedPlaylistMetadata(options.url, options);
       if (playlistVideos && playlistVideos.length > 0) {
@@ -1017,8 +1016,8 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
         }
       }
     } else {
-    // Download metadata first before starting the actual download
-    try {
+      // Download metadata first before starting the actual download
+      try {
       console.log(`[${new Date().toISOString()}] Downloading metadata for: ${options.url}`);
       statusTracker.updateStatus(downloadId, { status: "downloading_metadata" });
 
@@ -1052,7 +1051,6 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
       console.error(`[${new Date().toISOString()}] Error downloading metadata:`, error);
       // Continue with download even if metadata fails
     }
-  }
 
   // Spawn yt-dlp process and actively track its stdout/stderr + filesystem state.
   (async () => {
@@ -1303,6 +1301,8 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
       }
     }
   })();
+
+  }
 
   return {
     success: true,
