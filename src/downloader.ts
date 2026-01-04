@@ -327,6 +327,87 @@ async function extractVideoMetadata(url: string): Promise<{
 }
 
 /**
+ * Extract metadata for all videos in a playlist/channel without downloading
+ */
+async function extractPlaylistMetadata(url: string, isChannel: boolean = false): Promise<Array<{
+  id: string;
+  title: string;
+  channel: string;
+  channelId?: string;
+  duration?: number;
+  playlistId?: string;
+  playlistTitle?: string;
+  fullMetadata: Record<string, any>;
+}> | null> {
+  try {
+    console.log(`[${new Date().toISOString()}] Extracting playlist/channel metadata for: ${url}`);
+
+    const proc = Bun.spawn({
+      cmd: [
+        "yt-dlp",
+        ...getJsRuntimeFlag(),
+        url,
+        "--dump-json",
+        "--no-warnings",
+        "--flat-playlist", // Don't recurse into individual videos
+        "--skip-download", // Don't download anything
+        isChannel ? "--yes-playlist" : "--yes-playlist",
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+
+    if (exitCode !== 0) {
+      const stderr = await new Response(proc.stderr).text();
+      console.error(`[${new Date().toISOString()}] yt-dlp playlist metadata extraction failed: ${stderr}`);
+      return null;
+    }
+
+    // Split output by newlines and parse each JSON line
+    const lines = output.trim().split('\n').filter(line => line.trim());
+    const videos: Array<{
+      id: string;
+      title: string;
+      channel: string;
+      channelId?: string;
+      duration?: number;
+      playlistId?: string;
+      playlistTitle?: string;
+      fullMetadata: Record<string, any>;
+    }> = [];
+
+    for (const line of lines) {
+      try {
+        const data = JSON.parse(line.trim());
+        if (data && data.id && data.title) {
+          videos.push({
+            id: data.id,
+            title: data.title,
+            channel: data.channel || data.uploader || "",
+            channelId: data.channel_id || data.channel_url?.split("/").pop(),
+            duration: data.duration || undefined,
+            playlistId: data.playlist_id || undefined,
+            playlistTitle: data.playlist_title || data.playlist || undefined,
+            fullMetadata: data,
+          });
+        }
+      } catch (parseError) {
+        console.error(`[${new Date().toISOString()}] Error parsing metadata line:`, parseError);
+      }
+    }
+
+    console.log(`[${new Date().toISOString()}] Extracted metadata for ${videos.length} videos from playlist/channel`);
+    return videos;
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error extracting playlist metadata:`, error);
+    return null;
+  }
+}
+
+/**
  * Save metadata to a hidden file next to the video files
  * @param metadata Full video metadata JSON
  * @param outputPath Directory path where videos are stored (or a file path)
@@ -503,6 +584,8 @@ function buildYtDlpArgs(options: DownloadOptions): string[] {
   // Use --yes-playlist for playlists and channels, --no-playlist for single videos
   if (isPlaylist || isChannel) {
     args.push("--yes-playlist");
+    // Output JSON metadata for each video so we can track them
+    args.push("--dump-json");
     // Ensure all videos go directly to outputPath without creating subdirectories
     // The output template already specifies the exact path, so videos should go there directly
   } else {
@@ -622,7 +705,8 @@ async function processDownloadedVideo(
   options: DownloadOptions,
   metadata: { title: string; channel: string; channelId?: string; duration?: number; playlistId?: string; playlistTitle?: string },
   fullMetadata: Record<string, any> | null,
-  ctx: { downloadId: string; ytdlpCommand: string }
+  ctx: { downloadId: string; ytdlpCommand: string },
+  requireFileExists: boolean = true
 ): Promise<void> {
   const tracker = getTracker();
   const statusTracker = getDownloadStatusTracker();
@@ -639,15 +723,16 @@ async function processDownloadedVideo(
     relativePath = options.outputPath;
   }
   
-  // Find the downloaded file
+  // Find the downloaded file (optional for early tracking)
   const normalizedPath = options.outputPath.replace(/\/$/, "");
   let filePath: string | undefined;
   let fileSize: number | undefined;
-  
-  // Try to find the file (yt-dlp output format: "%(title)s [%(id)s].%(ext)s")
-  try {
-    // Wait a bit for file to be written, then check
-    await new Promise(resolve => setTimeout(resolve, 3000));
+
+  if (requireFileExists) {
+    // Try to find the file (yt-dlp output format: "%(title)s [%(id)s].%(ext)s")
+    try {
+      // Wait a bit for file to be written, then check
+      await new Promise(resolve => setTimeout(resolve, 3000));
     
     // List files in the directory and find the one matching the video ID
     // Skip intermediate files (fragment files, .part files) - prefer final merged files
@@ -674,9 +759,10 @@ async function processDownloadedVideo(
         fileSize = bestFile.size;
       }
     }
-  } catch (error) {
-    // File might not exist yet or path issue
-    console.log(`[${new Date().toISOString()}] Could not find file for video ${videoId}:`, error);
+    } catch (error) {
+      // File might not exist yet or path issue
+      console.log(`[${new Date().toISOString()}] Could not find file for video ${videoId}:`, error);
+    }
   }
 
   function classifyPath(p: string): { kind: TrackedFileKind; intermediate: boolean } {
@@ -873,18 +959,50 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
     resolution: options.audioOnly ? undefined : options.resolution,
   });
 
-  // Download metadata first (before file download) for single videos
+  // Extract metadata upfront for all video types
   let singleVideoMetadata:
     | { id: string; title: string; channel: string; channelId?: string; duration?: number; playlistId?: string; playlistTitle?: string }
     | null = null;
   let fullVideoMetadata: Record<string, any> | null = null;
-  
-  if (!options.isPlaylist && !options.isChannel) {
-    // Download metadata first before starting the actual download
-    try {
-      console.log(`[${new Date().toISOString()}] Downloading metadata for: ${options.url}`);
-      statusTracker.updateStatus(downloadId, { status: "downloading_metadata" });
-      
+  let playlistVideos: Array<{
+    id: string;
+    title: string;
+    channel: string;
+    channelId?: string;
+    duration?: number;
+    playlistId?: string;
+    playlistTitle?: string;
+    fullMetadata: Record<string, any>;
+  }> | null = null;
+
+  // Extract metadata upfront
+  try {
+    console.log(`[${new Date().toISOString()}] Extracting metadata for: ${options.url}`);
+    statusTracker.updateStatus(downloadId, { status: "downloading_metadata" });
+
+    if (options.isPlaylist || options.isChannel) {
+      // For playlists/channels, get all video metadata upfront
+      playlistVideos = await extractPlaylistMetadata(options.url, options.isChannel);
+      if (playlistVideos && playlistVideos.length > 0) {
+        console.log(`[${new Date().toISOString()}] Found ${playlistVideos.length} videos in playlist/channel`);
+
+        // Track all videos immediately in the library
+        const tracker = getTracker();
+        for (const video of playlistVideos) {
+          const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
+          try {
+            await processDownloadedVideo(video.id, videoUrl, options, video, video.fullMetadata, {
+              downloadId: `${downloadId}-${video.id}`,
+              ytdlpCommand: `yt-dlp ${args.join(" ")}`,
+            }, false); // Don't require file to exist yet
+            console.log(`[${new Date().toISOString()}] Pre-tracked video: ${video.title}`);
+          } catch (err) {
+            console.error(`[${new Date().toISOString()}] Error pre-tracking video ${video.id}:`, err);
+          }
+        }
+      }
+    } else {
+      // For single videos, get metadata as before
       fullVideoMetadata = await extractFullVideoMetadata(options.url);
       if (fullVideoMetadata) {
         singleVideoMetadata = {
@@ -896,25 +1014,25 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
           playlistId: fullVideoMetadata.playlist_id || undefined,
           playlistTitle: fullVideoMetadata.playlist_title || fullVideoMetadata.playlist || undefined,
         };
-        
+
         // Update status with metadata
         statusTracker.updateStatus(downloadId, {
           title: singleVideoMetadata.title,
           channel: singleVideoMetadata.channel,
         });
-        
+
         // Save metadata to file immediately
         if (singleVideoMetadata.id) {
           const normalizedPath = options.outputPath.replace(/\/$/, "");
           saveMetadataToFile(fullVideoMetadata, normalizedPath, singleVideoMetadata.id);
         }
-        
+
         console.log(`[${new Date().toISOString()}] Metadata downloaded: ${singleVideoMetadata.title}`);
       }
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] Error downloading metadata:`, error);
-      // Continue with download even if metadata fails
     }
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] Error extracting metadata:`, error);
+    // Continue with download even if metadata fails
   }
 
   // Spawn yt-dlp process and actively track its stdout/stderr + filesystem state.
@@ -936,6 +1054,60 @@ export async function startDownload(options: DownloadOptions): Promise<DownloadR
 
       // Persist full yt-dlp output for UI debugging.
       statusTracker.appendLog(downloadId, raw);
+
+      // Process JSON metadata for playlists/channels (skip if already pre-tracked)
+      if ((options.isPlaylist || options.isChannel) && (line.startsWith('{') || line.startsWith('['))) {
+        try {
+          const metadata = JSON.parse(line);
+          if (metadata && metadata.id && metadata.title) {
+            // Calculate relative path for this download
+            let checkRelativePath: string;
+            try {
+              checkRelativePath = relative(DOWNLOADS_ROOT, options.outputPath);
+              if (checkRelativePath.startsWith("..")) {
+                checkRelativePath = options.outputPath;
+              }
+            } catch {
+              checkRelativePath = options.outputPath;
+            }
+
+            // Check if we already pre-tracked this video
+            const tracker = getTracker();
+            const existingVideo = tracker.getVideo(metadata.id, checkRelativePath);
+
+            if (!existingVideo) {
+              // This is video metadata from yt-dlp --dump-json
+              console.log(`[${new Date().toISOString()}] Processing video metadata: ${metadata.title} (${metadata.id})`);
+              const videoUrl = `https://www.youtube.com/watch?v=${metadata.id}`;
+
+              // Extract video metadata
+              const videoMetadata = {
+                id: metadata.id,
+                title: metadata.title,
+                channel: metadata.channel || metadata.uploader || "",
+                channelId: metadata.channel_id || metadata.channel_url?.split("/").pop(),
+                duration: metadata.duration || undefined,
+                playlistId: options.isPlaylist ? metadata.playlist_id || undefined : undefined,
+                playlistTitle: options.isPlaylist ? metadata.playlist_title || metadata.playlist || undefined : undefined,
+              };
+
+              // Track the video immediately (before download completes)
+              try {
+                processDownloadedVideo(metadata.id, videoUrl, options, videoMetadata, metadata, {
+                  downloadId: `${downloadId}-${metadata.id}`,
+                  ytdlpCommand: `yt-dlp ${args.join(" ")}`,
+                }, false); // Don't require file to exist yet
+                console.log(`[${new Date().toISOString()}] Tracked video: ${metadata.title}`);
+              } catch (err) {
+                console.error(`[${new Date().toISOString()}] Error tracking video ${metadata.id}:`, err);
+              }
+            }
+          }
+          return;
+        } catch (jsonError) {
+          // Not JSON, continue with normal processing
+        }
+      }
 
       // Keep a short tail of stderr-ish lines for debugging on failure.
       if (line.toLowerCase().includes("error") || line.toLowerCase().includes("traceback")) {
