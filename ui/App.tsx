@@ -20,7 +20,7 @@ import { isChannelInput, isPlaylistInput } from "./lib/youtube-detect";
 import { Badge, Button, Card, Checkbox, Input, Modal, Radio, Select, Toast, cx } from "./components/ui";
 
 type Page = "downloads" | "tracking" | "developer";
-type TrackingTab = "videos" | "channels" | "playlists";
+type TrackingTab = "videos" | "channels" | "playlists" | "schedules";
 
 function getPageFromHash(): Page | null {
   if (typeof window === "undefined") return null;
@@ -37,14 +37,14 @@ function getTrackingTabFromHash(): TrackingTab | null {
   const raw = window.location.hash.replace(/^#/, "");
   const [base, maybeTab] = raw.split("/");
   if (base !== "tracking") return null;
-  if (maybeTab === "videos" || maybeTab === "channels" || maybeTab === "playlists") return maybeTab;
+  if (maybeTab === "videos" || maybeTab === "channels" || maybeTab === "playlists" || maybeTab === "schedules") return maybeTab;
   return null;
 }
 
 function getTrackingHashFromStorage(): string {
   try {
     const t = window.localStorage.getItem("yt_tracking_tab");
-    if (t === "channels" || t === "playlists") return `#tracking/${t}`;
+    if (t === "channels" || t === "playlists" || t === "schedules") return `#tracking/${t}`;
   } catch {
     // ignore
   }
@@ -171,8 +171,6 @@ export function App() {
 function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: string) => void }) {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [collectionsOpen, setCollectionsOpen] = useState(false);
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
 
   const [url, setUrl] = useState("");
   const [path, setPath] = useState("");
@@ -230,17 +228,9 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
     if (res.ok && res.data.success) setCollections(res.data.collections || []);
   }
 
-  async function loadSchedules() {
-    const res = await apiGet<{ success: true; schedules: Schedule[] }>("/api/schedules");
-    if (res.ok && res.data.success) setSchedules(res.data.schedules || []);
-  }
-
   useEffect(() => {
     loadCollections();
-    loadSchedules();
   }, []);
-
-  useInterval(() => loadSchedules(), 30_000);
 
   async function start() {
     const u = url.trim();
@@ -297,11 +287,6 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
     }
   }
 
-  const collectionNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const c of collections) map.set(c.id, c.name);
-    return map;
-  }, [collections]);
 
   return (
     <div className="grid gap-6">
@@ -471,82 +456,6 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
         </div>
       </Card>
 
-      <Card
-        title="Scheduled downloads"
-        right={
-          <Button variant="ghost" onClick={() => loadSchedules()}>
-            Refresh
-          </Button>
-        }
-      >
-        {schedules.length === 0 ? (
-          <div className="text-sm text-white/60">No schedules yet.</div>
-        ) : (
-          <div className="grid gap-3">
-            {schedules
-              .slice()
-              .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-              .map((s) => (
-                <div key={s.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-sm font-semibold text-white">{s.isChannel ? "Channel" : s.isPlaylist ? "Playlist" : "Video"}</div>
-                        <Badge tone={s.enabled ? "good" : "muted"}>{s.enabled ? "Active" : "Paused"}</Badge>
-                        <Badge tone="muted">{s.audioOnly ? "Audio" : `Video ${s.resolution || "1080"}p`}</Badge>
-                        <Badge tone="muted">{formatInterval(s.intervalMinutes)}</Badge>
-                      </div>
-                      <div className="mt-1 truncate text-xs text-white/55">{s.url}</div>
-                      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
-                        <span>Collection: {s.collectionId ? collectionNameById.get(s.collectionId) || "Unknown" : "None"}</span>
-                        <span>Path: {s.path || "auto"}</span>
-                        <span>Next: {formatTime(s.nextRun)}</span>
-                        {s.lastRun ? <span>Last: {formatTime(s.lastRun)}</span> : null}
-                      </div>
-                    </div>
-                    <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
-                      <Button
-                        variant="ghost"
-                        onClick={async () => {
-                          const r = await apiSend<{ success: boolean; message?: string }>(`/api/schedules/${s.id}`, "PUT", {
-                            enabled: !s.enabled,
-                          });
-                          if (!r.ok) return props.showToast("bad", r.message);
-                          await loadSchedules();
-                        }}
-                      >
-                        {s.enabled ? "Pause" : "Resume"}
-                      </Button>
-                      <Button variant="ghost" onClick={() => setEditSchedule(s)}>
-                        Edit
-                      </Button>
-                      <Button
-                        variant="danger"
-                        onClick={async () => {
-                          if (!window.confirm("Delete this schedule?")) return;
-                          const scheduleId = s.id;
-                          // Optimistically update UI immediately
-                          setSchedules(prev => prev.filter(sched => sched.id !== scheduleId));
-                          props.showToast("good", "Schedule deleted.");
-                          const r = await apiSend<{ success: boolean; message?: string }>(`/api/schedules/${scheduleId}`, "DELETE");
-                          if (!r.ok) {
-                            // Revert on error
-                            await loadSchedules();
-                            return props.showToast("bad", r.message);
-                          }
-                          // Refresh to ensure consistency
-                          await loadSchedules();
-                        }}
-                      >
-                        Delete
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-          </div>
-        )}
-      </Card>
 
       <CollectionsModal
         open={collectionsOpen}
@@ -561,18 +470,6 @@ function DownloadsPage(props: { showToast: (tone: "good" | "bad", message: strin
         showToast={props.showToast}
       />
 
-      <EditScheduleModal
-        open={!!editSchedule}
-        schedule={editSchedule}
-        collections={collections}
-        onClose={() => setEditSchedule(null)}
-        onSaved={async () => {
-          setEditSchedule(null);
-          await loadSchedules();
-          props.showToast("good", "Schedule updated.");
-        }}
-        showToast={props.showToast}
-      />
     </div>
   );
 }
@@ -1136,6 +1033,8 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
   const [videos, setVideos] = useState<TrackedVideo[]>([]);
   const [channels, setChannels] = useState<TrackedChannel[]>([]);
   const [playlists, setPlaylists] = useState<TrackedPlaylist[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [editSchedule, setEditSchedule] = useState<Schedule | null>(null);
   const [q, setQ] = useState("");
   const [logsById, setLogsById] = useState<Record<string, { loading: boolean; log?: string; error?: string }>>({});
   const [videoLogIds, setVideoLogIds] = useState<Record<string, string[]>>({});
@@ -1205,6 +1104,11 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
     }
   }
 
+  async function loadSchedules() {
+    const res = await apiGet<{ success: true; schedules: Schedule[] }>("/api/schedules");
+    if (res.ok && res.data.success) setSchedules(res.data.schedules || []);
+  }
+
   async function loadDownloads() {
     const res = await apiGet<{ success: true; downloads: DownloadStatus[] }>("/api/downloads/status");
     if (!res.ok) return;
@@ -1213,23 +1117,26 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
 
   useEffect(() => {
     loadAll();
+    loadSchedules();
     loadDownloads();
   }, []);
 
   useInterval(() => loadDownloads(), 2000);
   useInterval(() => loadAll(), 30_000);
+  useInterval(() => loadSchedules(), 30_000);
 
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
-    if (!query) return { videos, channels, playlists };
+    if (!query) return { videos, channels, playlists, schedules };
     return {
       videos: videos.filter((v) => `${v.title} ${v.channel} ${v.relativePath} ${v.id}`.toLowerCase().includes(query)),
       channels: channels.filter((c) => `${c.channelName} ${c.relativePath} ${c.url}`.toLowerCase().includes(query)),
       playlists: playlists.filter((p) => `${p.playlistName} ${p.relativePath} ${p.url}`.toLowerCase().includes(query)),
+      schedules: schedules.filter((s) => `${s.url} ${s.isChannel ? "channel" : s.isPlaylist ? "playlist" : "video"}`.toLowerCase().includes(query)),
     };
-  }, [q, videos, channels, playlists]);
+  }, [q, videos, channels, playlists, schedules]);
 
-  return (
+  const mainContent = (
     <div className="grid gap-6">
       <div className="grid gap-4 md:grid-cols-4">
         <Card title="Active downloads">
@@ -1298,7 +1205,7 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
           <Card
             title="Library"
             right={
-              <div className="grid w-full grid-cols-3 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col">
+              <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:grid-cols-none sm:auto-cols-max sm:grid-flow-col">
                 <Button className="w-full" variant={tab === "videos" ? "primary" : "ghost"} onClick={() => setTab("videos")}>
                   Videos
                 </Button>
@@ -1307,6 +1214,9 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                 </Button>
                 <Button className="w-full" variant={tab === "playlists" ? "primary" : "ghost"} onClick={() => setTab("playlists")}>
                   Playlists
+                </Button>
+                <Button className="w-full" variant={tab === "schedules" ? "primary" : "ghost"} onClick={() => setTab("schedules")}>
+                  Schedules
                 </Button>
               </div>
             }
@@ -1651,11 +1561,99 @@ function TrackingPage(props: { showToast: (tone: "good" | "bad", message: string
                     ))}
                 </div>
               ) : null}
+
+              {tab === "schedules" ? (
+                <div className="grid gap-2">
+                  {filtered.schedules.length === 0 ? (
+                    <div className="text-sm text-white/60">No schedules yet.</div>
+                  ) : (
+                    filtered.schedules
+                      .slice()
+                      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+                      .slice(0, 200)
+                      .map((s) => (
+                        <div key={s.id} className="rounded-xl bg-white/3 p-4 ring-1 ring-white/8">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="text-sm font-semibold text-white">{s.isChannel ? "Channel" : s.isPlaylist ? "Playlist" : "Video"}</div>
+                                <Badge tone={s.enabled ? "good" : "muted"}>{s.enabled ? "Active" : "Paused"}</Badge>
+                                <Badge tone="muted">{s.audioOnly ? "Audio" : `Video ${s.resolution || "1080"}p`}</Badge>
+                                <Badge tone="muted">{formatInterval(s.intervalMinutes)}</Badge>
+                              </div>
+                              <div className="mt-1 truncate text-xs text-white/55">{s.url}</div>
+                              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
+                                <span>Path: {s.path || "auto"}</span>
+                                <span>Next: {formatTime(s.nextRun)}</span>
+                                {s.lastRun ? <span>Last: {formatTime(s.lastRun)}</span> : null}
+                              </div>
+                            </div>
+                            <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
+                              <Button
+                                variant="ghost"
+                                onClick={async () => {
+                                  const r = await apiSend<{ success: boolean; message?: string }>(`/api/schedules/${s.id}`, "PUT", {
+                                    enabled: !s.enabled,
+                                  });
+                                  if (!r.ok) return props.showToast("bad", r.message);
+                                  await loadSchedules();
+                                }}
+                              >
+                                {s.enabled ? "Pause" : "Resume"}
+                              </Button>
+                              <Button variant="ghost" onClick={() => setEditSchedule(s)}>
+                                Edit
+                              </Button>
+                              <Button
+                                variant="danger"
+                                onClick={async () => {
+                                  if (!window.confirm("Delete this schedule?")) return;
+                                  const scheduleId = s.id;
+                                  // Optimistically update UI immediately
+                                  setSchedules(prev => prev.filter(sched => sched.id !== scheduleId));
+                                  props.showToast("good", "Schedule deleted.");
+                                  const r = await apiSend<{ success: boolean; message?: string }>(`/api/schedules/${scheduleId}`, "DELETE");
+                                  if (!r.ok) {
+                                    // Revert on error
+                                    await loadSchedules();
+                                    return props.showToast("bad", r.message);
+                                  }
+                                  // Refresh to ensure consistency
+                                  await loadSchedules();
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                  )}
+                </div>
+              ) : null}
             </div>
           </Card>
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <>
+      {mainContent}
+      <EditScheduleModal
+        open={!!editSchedule}
+        schedule={editSchedule}
+        collections={[]}
+        onClose={() => setEditSchedule(null)}
+        onSaved={async () => {
+          setEditSchedule(null);
+          await loadSchedules();
+          props.showToast("good", "Schedule updated.");
+        }}
+        showToast={props.showToast}
+      />
+    </>
   );
 }
 
